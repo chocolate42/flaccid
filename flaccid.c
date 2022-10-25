@@ -11,12 +11,16 @@
 int (*MD5)(const unsigned char*, size_t, unsigned char*) = &mbedtls_md5;
 #endif
 
-//mmap
+
 #include <fcntl.h>
-#include <sys/mman.h>
 #include <sys/stat.h>
+#ifdef _WIN32
+#include "mman.h"
+#else
+#include <sys/mman.h>
 #include <sys/types.h>
 #include <unistd.h>
+#endif
 
 #include "FLAC/stream_encoder.h"
 
@@ -79,7 +83,7 @@ int main(int argc, char *argv[]){
 		return printf("Error: open() input failed\n");
 	fstat(fin_fd, &sb);
 	input_size=sb.st_size;
-	if(MAP_FAILED==(input=mmap(NULL, input_size, PROT_READ, MAP_SHARED|MAP_NORESERVE, fin_fd, 0)))
+	if(MAP_FAILED==(input=mmap(NULL, input_size, PROT_READ, MAP_SHARED, fin_fd, 0)))
 		return printf("Error: mmap failed\n");
 	close(fin_fd);
 
