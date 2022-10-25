@@ -3,7 +3,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifdef USE_OPENSSL
 #include <openssl/md5.h>
+#else
+#include "mbedtls/md5.h"
+int (*MD5)(const unsigned char*, size_t, unsigned char*) = &mbedtls_md5;
+#endif
+
 //mmap
 #include <fcntl.h>
 #include <sys/mman.h>
