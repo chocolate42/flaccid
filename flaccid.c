@@ -131,8 +131,26 @@ int main(int argc, char *argv[]){
 			exit(1);
 		}
 		else if(omp_get_thread_num()==work_count){//md5 thread
-			MD5((void*)input, input_size, header+26);//hack because we're flailing about in memory, rule of thumb
-			//update close to worker wavefront to access input when it's likely in cache TODO
+			MD5_CTX ctx;
+			uint32_t wavefront, done=0;
+			size_t iloc, ilen;
+			MD5_Init(&ctx);
+			while(1){
+				omp_set_lock(&curr_frame_lock);
+				wavefront=curr_frame_in;
+				omp_unset_lock(&curr_frame_lock);
+				if(done<wavefront){
+					iloc=done*input_frame_size;
+					ilen=(wavefront>=last_frame)?(input_size-iloc):((wavefront-done)*input_frame_size);
+					MD5_Update(&ctx, ((void*)input)+iloc, ilen);
+					done=wavefront;
+					if(done>=last_frame)
+						break;
+				}
+				else
+					usleep(100);
+			}
+			MD5_Final(header+26, &ctx);
 		}
 		else if(omp_get_thread_num()==work_count+1){//output thread
 			int h, j, k, status;
@@ -142,7 +160,7 @@ int main(int argc, char *argv[]){
 			while(curr_frame_out<=last_frame){
 				for(j=0;j<work_count;++j){
 					if(output_skipped==work_count){//sleep if there's nothing to write
-						sleep(0.001);
+						usleep(100);
 						output_skipped=0;
 					}
 					h=-1;
@@ -208,7 +226,7 @@ int main(int argc, char *argv[]){
 					#pragma omp flush
 				}
 				else
-					sleep(0.001);
+					usleep(100);
 			}
 		}
 	}
