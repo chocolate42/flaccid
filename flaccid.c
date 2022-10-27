@@ -210,8 +210,8 @@ int main(int argc, char *argv[]){
 	set.min_blocksize=4096;
 	set.max_blocksize=4096;
 
-	if(argc!=6)
-		return printf("Usage: flaccid worker_count compression_level min_blocksize max_blocksize cdda_raw\nCompare to 'flac --force-raw-format --endian=little -channels=2 --bps=16 --sample-rate=44100 --sign=signed --no-padding --no-seektable cdda_raw'\nFor an apples to apples comparison ensure blocksize matches flac defaults for a given compression level\n");
+	if(argc!=7)
+		return printf("Usage: flaccid worker_count compression_level min_blocksize max_blocksize cdda_raw output_file\nCompare to 'flac --force-raw-format --endian=little -channels=2 --bps=16 --sample-rate=44100 --sign=signed --no-padding --no-seektable cdda_raw'\nFor an apples to apples comparison ensure blocksize matches flac defaults for a given compression level\n");
 
 	work_count=atoi(argv[1]);
 	set.compression_level=atoi(argv[2]);
@@ -250,7 +250,7 @@ int main(int argc, char *argv[]){
 	tot_samples=input_size/(set.channels*bytes_per_sample);
 	printf("flaccid -%d%s%s\n", set.compression_level, set.do_e?"e":"", set.do_p?"p":"");
 
-	if(!(fout=fopen("flaccid.flac", "wb+")))
+	if(!(fout=fopen(argv[6], "wb+")))
 		return printf("Error: fopen() output failed\n");
 	outsize+=fwrite(header, 1, 42, fout);
 	//seektable dummy TODO
