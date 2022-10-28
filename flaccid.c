@@ -37,21 +37,41 @@ void MD5_Final(uint8_t *sha1, MD5_CTX *ctx){
 
 #include "FLAC/stream_encoder.h"
 
-#define SHARD_COUNT 4
+typedef struct{
+	int work_count;/*working variables*/
+	int channels, bps, sample_rate, compression_level, do_p, do_e;/*flac*/
+	uint32_t minf, maxf;
+	uint8_t hash[16];
+	int blocksize_min, blocksize_max, blocksize_stride;/*chunk*/
+	int *greedblocks;/*greed*/
+	size_t greedblocks_count;
+} flac_settings;
+
+char *help="Usage: flaccid chunk cdda_raw output_file worker_count compression_level blocksize_min blocksize_max blocksize_stride\nOR\n"
+	"       flaccid greed cdda_raw output_file worker_count compression_level list,of,blocksizes,to,try\n"
+	"Compare to 'flac --force-raw-format --endian=little -channels=2 --bps=16 --sample-rate=44100 --sign=signed --no-padding --no-seektable cdda_raw'\nFor an apples to apples comparison ensure blocksize matches flac defaults for a given compression level\n";
+
+void goodbye(char *s);
+
+void goodbye(char *s){
+	fprintf(stderr, "%s", s);
+	exit(1);
+}
+
+/*chunk mode code*/
 
 /* Chunk encoding is a simple brute-force variable blocksize implementation
- * * Define a min and max blocksize, where min is a power-of-two multiple of max
+ * * Define min/max/stride, where max=min*(stride^(effort-1))
+ * * effort is the number of blocksizes used, the number of times input is fully encoded
  * * A chunk is the size of the max blocksize
- * * Imagine a chunk partitioned evenly into a binary tree
- * * The root is a tier of max blocksize, every tier down represents the previous blocksize halved
+ * * Imagine a chunk partitioned evenly into a n-ary tree, where n=stride
+ * * The root is a tier of max blocksize, every tier down represents the frames with blocksize=prev_tier_blocksize/stride
  * * The leaf nodes are the final tier of min blocksize
  * * Compute everything
- * * For every node recursively pick smallest(child[0]+child[1], self)
+ * * For every node recursively pick smallest(sum_of_children, self)
 */
 
-typedef struct{
-	int channels, bps, sample_rate, compression_level, blocksize_min, blocksize_max, blocksize_stride, do_p, do_e;
-} flac_settings;
+#define SHARD_COUNT 4
 
 typedef struct chunk_encoder chunk_enc;
 
@@ -69,8 +89,6 @@ typedef struct{
 	chunk_enc chunk[SHARD_COUNT];
 	uint32_t curr_chunk[SHARD_COUNT];
 	int status[SHARD_COUNT];
-	void *outbuf[SHARD_COUNT];
-	size_t outbuf_size[SHARD_COUNT];
 	uint32_t minframe, maxframe;
 } worker;
 /*status
@@ -78,17 +96,12 @@ typedef struct{
 	2: Waiting for output
 */
 
-void goodbye(char *s);
+int chunk_main(int argc, char *argv[], int16_t *input, size_t input_size, FILE *fout, flac_settings *set);
 chunk_enc *chunk_init(chunk_enc *c, unsigned int min, unsigned int max, flac_settings *set);
 void chunk_process(chunk_enc *c, int16_t *input, uint64_t sample_number);
 void chunk_invalidate(chunk_enc *c);
 size_t chunk_analyse(chunk_enc *c, uint32_t *minframe, uint32_t *maxframe);
 void chunk_write(chunk_enc *c, FILE *fout);
-
-void goodbye(char *s){
-	fprintf(stderr, "%s", s);
-	exit(1);
-}
 
 chunk_enc *chunk_init(chunk_enc *c, unsigned int min, unsigned int max, flac_settings *set){
 	size_t i;
@@ -180,107 +193,69 @@ void chunk_write(chunk_enc *c, FILE *fout){
 	}
 }
 
-int main(int argc, char *argv[]){
-	flac_settings set;
+int chunk_main(int argc, char *argv[], int16_t *input, size_t input_size, FILE *fout, flac_settings *set){
 	unsigned int bytes_per_sample;
 	worker *work;
-	int work_count;
 
 	//input thread variables
-	struct stat sb;
-	int fin_fd, i;
-	int16_t *input;
-	size_t input_size, input_chunk_size;
+	int i;
+	size_t input_chunk_size;
 	uint32_t curr_chunk_in=0, last_chunk, last_chunk_sample_count;
 	omp_lock_t curr_chunk_lock;
 	//output thread variables
-	FILE *fout;
 	int output_skipped=0;
 	uint32_t curr_chunk_out=0;
-	size_t outsize=0;
-	//header variables
-	uint32_t minf=UINT32_MAX, maxf=0;
 	int blocksize_min_input;
-	uint64_t tot_samples;
-	uint8_t header[42]={
-		0x66, 0x4C, 0x61, 0x43,//magic
-		0x80, 0, 0, 0x22,//streaminfo header
-		0, 0, 0, 0,//min/max blocksize TBD
-		0, 0, 0, 0, 0, 0,//min/max frame size TBD
-		0x0a, 0xc4, 0x42,//44.1khz, 2 channel
-		0xf0,//16 bps, upper 4 bits of total samples
-		0, 0, 0, 0, //lower 32 bits of total samples
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,//md5
-	};
 
-	set.bps=16;
-	set.sample_rate=44100;
-	set.channels=2;
-	set.compression_level=5;
-	set.blocksize_min=4096;
-	set.blocksize_max=4096;
+	if(argc!=4)
+		goodbye(help);
 
-	if(argc!=8)
-		goodbye("Usage: flaccid worker_count compression_level blocksize_min blocksize_max blocksize_stride cdda_raw output_file\nCompare to 'flac --force-raw-format --endian=little -channels=2 --bps=16 --sample-rate=44100 --sign=signed --no-padding --no-seektable cdda_raw'\nFor an apples to apples comparison ensure blocksize matches flac defaults for a given compression level\n");
-
-	work_count=atoi(argv[1]);
-	if(work_count<1)
-		goodbye("Error: Worker count must be >=1, it is the number of encoder cores to use\n");
-	set.compression_level=atoi(argv[2]);
-	if(set.compression_level<0)
-		set.compression_level=0;
-	set.do_e=strchr(argv[2], 'e')!=NULL;
-	set.do_p=strchr(argv[2], 'p')!=NULL;
-	blocksize_min_input=atoi(argv[3]);
+	blocksize_min_input=atoi(argv[1]);
 	if(blocksize_min_input<16)
 		goodbye("Error: blocksize_min must be >=16\n");
-	set.blocksize_max=atoi(argv[4]);
-	set.blocksize_stride=atoi(argv[5]);
+	set->blocksize_max=atoi(argv[2]);
+	set->blocksize_stride=atoi(argv[3]);
 
-	if(blocksize_min_input>set.blocksize_max)
+	if(blocksize_min_input>set->blocksize_max)
 		goodbye("Error: Min blocksize cannot be greater than max blocksize\n");
-	if(set.blocksize_max>=65536)
+	if(set->blocksize_max>=65536)
 		goodbye("Error: Max blocksize must be <65536\n");
-	if(set.blocksize_stride<2)
-		goodbye("blocksize_stride is the multiplier step between the blocksizes in use, which must be an integer >=2\n"
-			"For example min=256, max=4096, stride=4 defines blocksizes 256, 1024, 4096\n");
+	if(blocksize_min_input==set->blocksize_max){
+		set->blocksize_min=blocksize_min_input;
+		set->blocksize_stride=2;/*needs to be 2, hack*/
+	}
+	else{
+		if(set->blocksize_stride<2)
+			goodbye("blocksize_stride is the multiplier step between the blocksizes in use, which must be an integer >=2\n"
+				"For example min=256, max=4096, stride=4 defines blocksizes 256, 1024, 4096\n");
 
-	set.blocksize_min=set.blocksize_max;
-	while((set.blocksize_min/set.blocksize_stride)>0 && (set.blocksize_min/set.blocksize_stride)>=blocksize_min_input){
-		if(set.blocksize_min%set.blocksize_stride)
-			goodbye("Error: Min/max blocksizes must divide neatly by stride\n");
-		set.blocksize_min/=set.blocksize_stride;
+		set->blocksize_min=set->blocksize_max;
+		while((set->blocksize_min/set->blocksize_stride)>0 && (set->blocksize_min/set->blocksize_stride)>=blocksize_min_input){
+			if(set->blocksize_min%set->blocksize_stride)
+				goodbye("Error: Min/max blocksizes must divide neatly by stride\n");
+			set->blocksize_min/=set->blocksize_stride;
+		}
 	}
 
-	bytes_per_sample=set.bps/8;
+	bytes_per_sample=set->bps/8;
 
-	input_chunk_size=set.blocksize_max*set.channels*bytes_per_sample;
+	input_chunk_size=set->blocksize_max*set->channels*bytes_per_sample;
 
 	omp_init_lock(&curr_chunk_lock);
 
-	if(-1==(fin_fd=open(argv[6], O_RDONLY)))
-		goodbye("Error: open() input failed\n");
-	fstat(fin_fd, &sb);
-	input_size=sb.st_size;
-	if(MAP_FAILED==(input=mmap(NULL, input_size, PROT_READ, MAP_SHARED, fin_fd, 0)))
-		goodbye("Error: mmap failed\n");
-	close(fin_fd);
-
 	last_chunk=(input_size/input_chunk_size)+(input_size%input_chunk_size?0:-1);
-	last_chunk_sample_count=(input_size%input_chunk_size)/(set.channels*bytes_per_sample);
-	tot_samples=input_size/(set.channels*bytes_per_sample);
-	printf("flaccid -%d%s%s\n", set.compression_level, set.do_e?"e":"", set.do_p?"p":"");
+	last_chunk_sample_count=(input_size%input_chunk_size)/(set->channels*bytes_per_sample);
 
-	if(!(fout=fopen(argv[7], "wb+")))
-		goodbye("Error: fopen() output failed\n");
-	outsize+=fwrite(header, 1, 42, fout);
+	printf("flaccid -%d%s%s\n", set->compression_level, set->do_e?"e":"", set->do_p?"p":"");
+
+
 	//seektable dummy TODO
 
-	work=malloc(sizeof(worker)*work_count);
-	memset(work, 0, sizeof(worker)*work_count);
-	for(i=0;i<work_count;++i){
+	work=malloc(sizeof(worker)*set->work_count);
+	memset(work, 0, sizeof(worker)*set->work_count);
+	for(i=0;i<set->work_count;++i){
 		for(int h=0;h<SHARD_COUNT;++h){
-			chunk_init(&(work[i].chunk[h]), set.blocksize_min, set.blocksize_max, &set);
+			chunk_init(&(work[i].chunk[h]), set->blocksize_min, set->blocksize_max, set);
 			work[i].status[h]=1;
 			work[i].curr_chunk[h]=UINT32_MAX;
 		}
@@ -288,14 +263,14 @@ int main(int argc, char *argv[]){
 		work[i].minframe=UINT32_MAX;
 	}
 
-	omp_set_num_threads(work_count+2);
-	#pragma omp parallel num_threads(work_count+2) shared(work)
+	omp_set_num_threads(set->work_count+2);
+	#pragma omp parallel num_threads(set->work_count+2) shared(work)
 	{
-		if(omp_get_num_threads()!=work_count+2){
-			fprintf(stderr, "Error: Failed to set %d threads (%dx encoders, 1x I/O, 1x MD5). Actually set %d threads\n", work_count+2, work_count, omp_get_num_threads());
+		if(omp_get_num_threads()!=set->work_count+2){
+			fprintf(stderr, "Error: Failed to set %d threads (%dx encoders, 1x I/O, 1x MD5). Actually set %d threads\n", set->work_count+2, set->work_count, omp_get_num_threads());
 			exit(1);
 		}
-		else if(omp_get_thread_num()==work_count){//md5 thread
+		else if(omp_get_thread_num()==set->work_count){//md5 thread
 			MD5_CTX ctx;
 			uint32_t wavefront, done=0;
 			size_t iloc, ilen;
@@ -315,14 +290,14 @@ int main(int argc, char *argv[]){
 				else
 					usleep(100);
 			}
-			MD5_Final(header+26, &ctx);
+			MD5_Final(set->hash, &ctx);
 		}
-		else if(omp_get_thread_num()==work_count+1){//output thread
+		else if(omp_get_thread_num()==set->work_count+1){//output thread
 			int h, j, k, status;
 			uint32_t curr_chunk;
 			while(curr_chunk_out<=last_chunk){
-				for(j=0;j<work_count;++j){
-					if(output_skipped==work_count){//sleep if there's nothing to write
+				for(j=0;j<set->work_count;++j){
+					if(output_skipped==set->work_count){//sleep if there's nothing to write
 						usleep(100);
 						output_skipped=0;
 					}
@@ -338,11 +313,6 @@ int main(int argc, char *argv[]){
 						}
 					}
 					if(h>-1){//do write
-						//#pragma omp atomic read
-						//obuf=work[j].outbuf[h];
-						//#pragma omp atomic read
-						//obuf_size=work[j].outbuf_size[h];
-						//outsize+=fwrite(obuf, 1, obuf_size, fout);
 						chunk_write(&(work[j].chunk[h]), fout);
 						++curr_chunk_out;
 						#pragma omp atomic
@@ -376,24 +346,25 @@ int main(int argc, char *argv[]){
 					if(work[omp_get_thread_num()].curr_chunk[h]==last_chunk && last_chunk_sample_count){//do a partial last chunk as single frame
 						if(!FLAC__static_encoder_process_frame_bps16_interleaved(
 							work[omp_get_thread_num()].chunk[h].enc,
-							input+work[omp_get_thread_num()].curr_chunk[h]*set.channels*set.blocksize_max,
-							last_chunk_sample_count, set.blocksize_max*work[omp_get_thread_num()].curr_chunk[h],
+							input+work[omp_get_thread_num()].curr_chunk[h]*set->channels*set->blocksize_max,
+							last_chunk_sample_count, set->blocksize_max*work[omp_get_thread_num()].curr_chunk[h],
 							&(work[omp_get_thread_num()].chunk[h].outbuf),
 							&(work[omp_get_thread_num()].chunk[h].outbuf_size))){ //using bps16
-							fprintf(stderr, "processing failed worker %d sample_number %d\n", omp_get_thread_num(), set.blocksize_max*work[omp_get_thread_num()].curr_chunk[h]);
+							fprintf(stderr, "processing failed worker %d sample_number %d\n", omp_get_thread_num(), set->blocksize_max*work[omp_get_thread_num()].curr_chunk[h]);
 							fprintf(stderr, "Encoder state: %s\n", FLAC__StreamEncoderStateString[FLAC__stream_encoder_get_state(work[omp_get_thread_num()].chunk[h].enc->stream_encoder)]);
 							exit(1);
 						}
 						work[omp_get_thread_num()].chunk[h].use_this=1;
+
+						if(work[omp_get_thread_num()].chunk[h].outbuf_size < work[omp_get_thread_num()].minframe)
+							work[omp_get_thread_num()].minframe=work[omp_get_thread_num()].chunk[h].outbuf_size;
+						if(work[omp_get_thread_num()].chunk[h].outbuf_size > work[omp_get_thread_num()].maxframe)
+							work[omp_get_thread_num()].maxframe=work[omp_get_thread_num()].chunk[h].outbuf_size;
 					}
 					else{//do a full chunk
-						chunk_process(&(work[omp_get_thread_num()].chunk[h]), input+work[omp_get_thread_num()].curr_chunk[h]*(input_chunk_size/bytes_per_sample), set.blocksize_max*work[omp_get_thread_num()].curr_chunk[h]);
+						chunk_process(&(work[omp_get_thread_num()].chunk[h]), input+work[omp_get_thread_num()].curr_chunk[h]*(input_chunk_size/bytes_per_sample), set->blocksize_max*work[omp_get_thread_num()].curr_chunk[h]);
 						chunk_analyse(&(work[omp_get_thread_num()].chunk[h]), &(work[omp_get_thread_num()].minframe), &(work[omp_get_thread_num()].maxframe));
 					}
-					if(work[omp_get_thread_num()].outbuf_size[h] < work[omp_get_thread_num()].minframe)
-						work[omp_get_thread_num()].minframe=work[omp_get_thread_num()].outbuf_size[h];
-					if(work[omp_get_thread_num()].outbuf_size[h] > work[omp_get_thread_num()].maxframe)
-						work[omp_get_thread_num()].maxframe=work[omp_get_thread_num()].outbuf_size[h];
 					#pragma omp atomic
 					work[omp_get_thread_num()].status[h]++;
 					#pragma omp flush
@@ -406,27 +377,93 @@ int main(int argc, char *argv[]){
 	#pragma omp barrier
 
 	//update header
-	for(i=0;i<work_count;++i){
-		if(work[i].curr_chunk[0]!=UINT32_MAX && work[i].minframe < minf)
-			minf=work[i].minframe;
-		if(work[i].curr_chunk[0]!=UINT32_MAX && work[i].maxframe > maxf)
-			maxf=work[i].maxframe;
+	for(i=0;i<set->work_count;++i){
+		if(work[i].curr_chunk[0]!=UINT32_MAX && work[i].minframe < set->minf)
+			set->minf=work[i].minframe;
+		if(work[i].curr_chunk[0]!=UINT32_MAX && work[i].maxframe > set->maxf)
+			set->maxf=work[i].maxframe;
 	}
+	return 0;
+}
+
+int main(int argc, char *argv[]){
+	FILE *fout;
+	int fd;
+	int16_t *input;
+	uint8_t header[42]={
+		0x66, 0x4C, 0x61, 0x43,//magic
+		0x80, 0, 0, 0x22,//streaminfo header
+		0, 0, 0, 0,//min/max blocksize TBD
+		0, 0, 0, 0, 0, 0,//min/max frame size TBD
+		0x0a, 0xc4, 0x42,//44.1khz, 2 channel
+		0xf0,//16 bps, upper 4 bits of total samples
+		0, 0, 0, 0, //lower 32 bits of total samples
+		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,//md5
+	};
+	uint64_t tot_samples;
+
+	struct stat sb;
+	flac_settings set;
+
+	if(argc<6)
+		goodbye(help);
+
+	set.bps=16;
+	set.sample_rate=44100;
+	set.channels=2;
+	set.compression_level=5;
+	set.blocksize_min=4096;
+	set.blocksize_max=4096;
+	set.minf=UINT32_MAX;
+	set.maxf=0;
+
+	if(!(fout=fopen(argv[3], "wb+")))
+		goodbye("Error: fopen() output failed\n");
+	fwrite(header, 1, 42, fout);
+
+	//input TODO
+	if(-1==(fd=open(argv[2], O_RDONLY)))
+		goodbye("Error: open() input failed\n");
+	fstat(fd, &sb);
+	if(MAP_FAILED==(input=mmap(NULL, sb.st_size, PROT_READ, MAP_SHARED, fd, 0)))
+		goodbye("Error: mmap failed\n");
+	close(fd);
+	tot_samples=sb.st_size/(set.channels*(set.bps/8));
+
+	set.work_count=atoi(argv[4]);
+	if(set.work_count<1)
+		goodbye("Error: Worker count must be >=1, it is the number of encoder cores to use\n");
+
+	set.compression_level=atoi(argv[5]);
+	if(set.compression_level<0)
+		set.compression_level=0;
+	set.do_e=strchr(argv[5], 'e')!=NULL;
+	set.do_p=strchr(argv[5], 'p')!=NULL;
+
+	if(strcmp(argv[1], "chunk")==0)
+		chunk_main(argc-5, argv+5, input, sb.st_size, fout, &set);
+	//else if(strcmp(argv[1], "greed")==0)
+	//	greed_main(argc-1, argv+1);
+	else
+		goodbye(help);
+
+	/* write finished header */
 	header[ 8]=(set.blocksize_min>>8)&255;
 	header[ 9]=(set.blocksize_min>>0)&255;
 	header[10]=(set.blocksize_max>>8)&255;
 	header[11]=(set.blocksize_max>>0)&255;
-	header[12]=(minf>>16)&255;
-	header[13]=(minf>> 8)&255;
-	header[14]=(minf>> 0)&255;
-	header[15]=(maxf>>16)&255;
-	header[16]=(maxf>> 8)&255;
-	header[17]=(maxf>> 0)&255;
+	header[12]=(set.minf>>16)&255;
+	header[13]=(set.minf>> 8)&255;
+	header[14]=(set.minf>> 0)&255;
+	header[15]=(set.maxf>>16)&255;
+	header[16]=(set.maxf>> 8)&255;
+	header[17]=(set.maxf>> 0)&255;
 	header[21]|=((tot_samples>>32)&255);
 	header[22]=(tot_samples>>24)&255;
 	header[23]=(tot_samples>>16)&255;
 	header[24]=(tot_samples>> 8)&255;
 	header[25]=(tot_samples>> 0)&255;
+	memcpy(header+26, set.hash, 16);
 	fflush(fout);
 	fseek(fout, 0, SEEK_SET);
 	fwrite(header, 1, 42, fout);
@@ -434,5 +471,4 @@ int main(int argc, char *argv[]){
 	//update seektable TODO
 
 	fclose(fout);
-	return 0;
 }

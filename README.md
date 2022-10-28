@@ -29,5 +29,4 @@ The changes boil down to:
 
 * Argument worker_count defines how many encode threads exist, but there are also two additional threads (one for writing output, one for MD5 hashing, input is transparent with mmap which the kernel deals with). The MD5 thread is currently not optimal as it blasts ahead causing unnecessary cache misses
 * Argument compression_level is the preset number, optionally appended with e and/or p
-* Compression levels 0/1/2 blocksize is forced to 4096, so these levels are unsuitable for comparison between frontends
 * Raw CDDA input only just because it was convenient
