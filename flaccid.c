@@ -90,7 +90,7 @@ typedef struct{
 	uint32_t curr_chunk[SHARD_COUNT];
 	int status[SHARD_COUNT];
 	uint32_t minframe, maxframe;
-} worker;
+} chunk_worker;
 /*status
 	1: Waiting to be encoded
 	2: Waiting for output
@@ -103,26 +103,33 @@ void chunk_invalidate(chunk_enc *c);
 size_t chunk_analyse(chunk_enc *c, uint32_t *minframe, uint32_t *maxframe);
 void chunk_write(chunk_enc *c, FILE *fout);
 
+FLAC__StaticEncoder *init_static_encoder(flac_settings *set, int blocksize);
+FLAC__StaticEncoder *init_static_encoder(flac_settings *set, int blocksize){
+	FLAC__StaticEncoder *r;
+	r=FLAC__static_encoder_new();
+	r->is_variable_blocksize=set->blocksize_min!=set->blocksize_max;
+	if(set->blocksize_max>16384 || (set->sample_rate<=48000 && set->blocksize_max>4608))
+		FLAC__stream_encoder_set_streamable_subset(r->stream_encoder, false);
+	FLAC__stream_encoder_set_channels(r->stream_encoder, set->channels);
+	FLAC__stream_encoder_set_bits_per_sample(r->stream_encoder, set->bps);
+	FLAC__stream_encoder_set_sample_rate(r->stream_encoder, set->sample_rate);
+	FLAC__stream_encoder_set_compression_level(r->stream_encoder, set->compression_level);
+	FLAC__stream_encoder_set_blocksize(r->stream_encoder, blocksize);/* override compression level */
+	if(set->do_p)
+		FLAC__stream_encoder_set_do_qlp_coeff_prec_search(r->stream_encoder, true);
+	if(set->do_e)
+		FLAC__stream_encoder_set_do_exhaustive_model_search(r->stream_encoder, true);
+	if(FLAC__static_encoder_init(r)!=FLAC__STREAM_ENCODER_INIT_STATUS_OK)
+		goodbye("Init failed\n");
+	return r;
+}
+
 chunk_enc *chunk_init(chunk_enc *c, unsigned int min, unsigned int max, flac_settings *set){
 	size_t i;
 	assert(min!=0);
 	assert(max>=min);
 
-	c->enc=FLAC__static_encoder_new();
-	c->enc->is_variable_blocksize=set->blocksize_min!=set->blocksize_max;
-	if(set->blocksize_max>16384 || (set->sample_rate<=48000 && set->blocksize_max>4608))
-		FLAC__stream_encoder_set_streamable_subset(c->enc->stream_encoder, false);
-	FLAC__stream_encoder_set_channels(c->enc->stream_encoder, set->channels);
-	FLAC__stream_encoder_set_bits_per_sample(c->enc->stream_encoder, set->bps);
-	FLAC__stream_encoder_set_sample_rate(c->enc->stream_encoder, set->sample_rate);
-	FLAC__stream_encoder_set_compression_level(c->enc->stream_encoder, set->compression_level);
-	FLAC__stream_encoder_set_blocksize(c->enc->stream_encoder, max);/* override compression level */
-	if(set->do_p)
-		FLAC__stream_encoder_set_do_qlp_coeff_prec_search(c->enc->stream_encoder, true);
-	if(set->do_e)
-		FLAC__stream_encoder_set_do_exhaustive_model_search(c->enc->stream_encoder, true);
-	if(FLAC__static_encoder_init(c->enc)!=FLAC__STREAM_ENCODER_INIT_STATUS_OK)
-		goodbye("Init failed\n");
+	c->enc=init_static_encoder(set, max);
 	c->child_count=set->blocksize_stride;
 	if(max/c->child_count<min)
 		c->child=NULL;
@@ -195,7 +202,7 @@ void chunk_write(chunk_enc *c, FILE *fout){
 
 int chunk_main(int argc, char *argv[], int16_t *input, size_t input_size, FILE *fout, flac_settings *set){
 	unsigned int bytes_per_sample;
-	worker *work;
+	chunk_worker *work;
 
 	//input thread variables
 	int i;
@@ -251,8 +258,8 @@ int chunk_main(int argc, char *argv[], int16_t *input, size_t input_size, FILE *
 
 	//seektable dummy TODO
 
-	work=malloc(sizeof(worker)*set->work_count);
-	memset(work, 0, sizeof(worker)*set->work_count);
+	work=malloc(sizeof(chunk_worker)*set->work_count);
+	memset(work, 0, sizeof(chunk_worker)*set->work_count);
 	for(i=0;i<set->work_count;++i){
 		for(int h=0;h<SHARD_COUNT;++h){
 			chunk_init(&(work[i].chunk[h]), set->blocksize_min, set->blocksize_max, set);
@@ -385,6 +392,119 @@ int chunk_main(int argc, char *argv[], int16_t *input, size_t input_size, FILE *
 	}
 	return 0;
 }
+/* end of chunk mode code */
+
+/* greed mode code */
+
+typedef struct{
+	FLAC__StaticEncoder *enc;
+	double frame_efficiency;
+	uint8_t *outbuf;
+	size_t outbuf_size;
+} greed_encoder;
+
+typedef struct{
+	greed_encoder *genc;
+	size_t genc_count;
+} greed_controller;
+
+int comp_int(const void *aa, const void *bb);
+int comp_int(const void *aa, const void *bb){
+	int *a=(int*)aa;
+	int *b=(int*)bb;
+	if(a<b)
+		return 1;
+	else
+		return a==b?0:-1;
+}
+
+int greed_main(int argc, char *argv[], int16_t *input, size_t input_size, FILE *fout, flac_settings *set);
+int greed_main(int argc, char *argv[], int16_t *input, size_t input_size, FILE *fout, flac_settings *set){
+	char *cptr;
+	size_t i;
+	uint64_t curr_sample, tot_samples=input_size/(set->channels*(set->bps/8));
+	greed_controller greed;
+	MD5_CTX ctx;
+	MD5_Init(&ctx);
+
+	if(argc!=2)
+		goodbye(help);
+
+	printf("greed mode currently single-threaded\n");
+
+	cptr=argv[1]-1;
+	set->greedblocks_count=0;
+	set->greedblocks=NULL;
+	do{
+		set->greedblocks=realloc(set->greedblocks, sizeof(int)*(set->greedblocks_count+1));
+		set->greedblocks[set->greedblocks_count]=atoi(cptr+1);
+		if(set->greedblocks[set->greedblocks_count]<16)
+			goodbye("Error: Blocksize must be at least 16\n");
+		if(set->greedblocks[set->greedblocks_count]>65535)
+			goodbye("Error: Blocksize must be at most 65535\n");
+		printf("blocksize %d\n", set->greedblocks[set->greedblocks_count]);
+		++set->greedblocks_count;
+	}while((cptr=strchr(cptr+1, ',')));
+
+
+	//blocks sorted descending should help occupancy of multithreading, TODO
+	qsort(set->greedblocks, set->greedblocks_count, sizeof(int), comp_int);
+	set->blocksize_max=set->greedblocks[0];
+	set->blocksize_min=set->greedblocks[set->greedblocks_count-1];
+
+	greed.genc=malloc(set->greedblocks_count*sizeof(greed_encoder));
+	greed.genc_count=set->greedblocks_count;
+	for(i=0;i<set->greedblocks_count;++i)
+		greed.genc[i].enc=init_static_encoder(set, set->greedblocks[i]);
+
+	for(curr_sample=0;curr_sample<tot_samples;){
+		size_t skip=0;
+		for(i=0;i<greed.genc_count;++i){
+			if((tot_samples-curr_sample)>=FLAC__stream_encoder_get_blocksize(greed.genc[i].enc->stream_encoder)){
+				FLAC__static_encoder_process_frame_bps16_interleaved(greed.genc[i].enc, input+(curr_sample*set->channels), FLAC__stream_encoder_get_blocksize(greed.genc[i].enc->stream_encoder), curr_sample, &(greed.genc[i].outbuf), &(greed.genc[i].outbuf_size));
+				greed.genc[i].frame_efficiency=greed.genc[i].outbuf_size;
+				greed.genc[i].frame_efficiency/=FLAC__stream_encoder_get_blocksize(greed.genc[i].enc->stream_encoder);
+				printf("frame efficiency: %f\n", greed.genc[i].frame_efficiency);
+			}
+			else{
+				greed.genc[i].frame_efficiency=9999.0;
+				++skip;
+			}
+		}
+		if(skip==greed.genc_count){//partial frame at end
+			FLAC__static_encoder_process_frame_bps16_interleaved(greed.genc[0].enc, input+(curr_sample*set->channels), tot_samples-curr_sample, curr_sample, &(greed.genc[0].outbuf), &(greed.genc[0].outbuf_size));
+			MD5_Update(&ctx, ((void*)input)+curr_sample*set->channels*(set->bps/8), (tot_samples-curr_sample)*set->channels*(set->bps/8));
+			fwrite(greed.genc[0].outbuf, 1, greed.genc[0].outbuf_size, fout);
+			if(greed.genc[0].outbuf_size<set->minf)
+				set->minf=greed.genc[0].outbuf_size;
+			if(greed.genc[0].outbuf_size>set->maxf)
+				set->maxf=greed.genc[0].outbuf_size;
+			curr_sample=tot_samples;
+		}
+		else{
+			double smallest_val=8888.0;
+			size_t smallest_index=greed.genc_count;
+			for(i=0;i<greed.genc_count;++i){
+				if(greed.genc[i].frame_efficiency<smallest_val){
+					smallest_val=greed.genc[i].frame_efficiency;
+					smallest_index=i;
+				}
+			}
+			assert(smallest_index!=greed.genc_count);
+			MD5_Update(&ctx, ((void*)input)+curr_sample*set->channels*(set->bps/8), FLAC__stream_encoder_get_blocksize(greed.genc[smallest_index].enc->stream_encoder)*set->channels*(set->bps/8));
+			fwrite(greed.genc[smallest_index].outbuf, 1, greed.genc[smallest_index].outbuf_size, fout);
+			if(greed.genc[smallest_index].outbuf_size<set->minf)
+				set->minf=greed.genc[smallest_index].outbuf_size;
+			if(greed.genc[smallest_index].outbuf_size>set->maxf)
+				set->maxf=greed.genc[smallest_index].outbuf_size;
+			curr_sample+=FLAC__stream_encoder_get_blocksize(greed.genc[smallest_index].enc->stream_encoder);
+		}
+	}
+	MD5_Final(set->hash, &ctx);
+
+	return 0;
+}
+/* end of greed mode code */
 
 int main(int argc, char *argv[]){
 	FILE *fout;
@@ -442,8 +562,8 @@ int main(int argc, char *argv[]){
 
 	if(strcmp(argv[1], "chunk")==0)
 		chunk_main(argc-5, argv+5, input, sb.st_size, fout, &set);
-	//else if(strcmp(argv[1], "greed")==0)
-	//	greed_main(argc-1, argv+1);
+	else if(strcmp(argv[1], "greed")==0)
+		greed_main(argc-5, argv+5, input, sb.st_size, fout, &set);
 	else
 		goodbye(help);
 
