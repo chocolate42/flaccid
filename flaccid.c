@@ -9,26 +9,29 @@
 #else
 #include "mbedtls/md5.h"
 typedef mbedtls_md5_context MD5_CTX;
-
+void MD5_Init(MD5_CTX *ctx);
+void MD5_Final(uint8_t *sha1, MD5_CTX *ctx);
 int (*MD5)(const unsigned char*, size_t, unsigned char*) = &mbedtls_md5;
+int (*MD5_Update)(MD5_CTX*, const unsigned char*, size_t) = &mbedtls_md5_update;
 
 void MD5_Init(MD5_CTX *ctx){
 	mbedtls_md5_init(ctx);
 	mbedtls_md5_starts(ctx);
 }
 
-int (*MD5_Update)(MD5_CTX*, const unsigned char*, size_t) = &mbedtls_md5_update;
-
 void MD5_Final(uint8_t *sha1, MD5_CTX *ctx){
 	mbedtls_md5_finish(ctx, sha1);
 }
 #endif
 
-
 #include <fcntl.h>
 #include <sys/stat.h>
 #ifdef _WIN32
-#include "mman.h"
+#include <windows.h>
+void usleep(unsigned int microseconds);
+void usleep(unsigned int microseconds){
+	Sleep(1+(microseconds/1000));
+}
 #else
 #include <sys/mman.h>
 #include <sys/types.h>
@@ -146,8 +149,7 @@ void chunk_process(chunk_enc *c, int16_t *input, uint64_t sample_number){
 	size_t i;
 	c->current_sample=sample_number;
 	if(!FLAC__static_encoder_process_frame_bps16_interleaved(c->enc, input, FLAC__stream_encoder_get_blocksize(c->enc->stream_encoder), sample_number, &(c->outbuf), &(c->outbuf_size))){ //using bps16
-		fprintf(stderr, "Static encode failed at sample_number = %"PRIu64"\n", sample_number);
-		fprintf(stderr, "Encoder state: %s\n", FLAC__StreamEncoderStateString[FLAC__stream_encoder_get_state(c->enc->stream_encoder)]);
+		fprintf(stderr, "Static encode failed, state: %s\n", FLAC__StreamEncoderStateString[FLAC__stream_encoder_get_state(c->enc->stream_encoder)]);
 		exit(1);
 	}
 	if(c->child){
@@ -508,8 +510,8 @@ int greed_main(int argc, char *argv[], int16_t *input, size_t input_size, FILE *
 
 int main(int argc, char *argv[]){
 	FILE *fout;
-	int fd;
 	int16_t *input;
+	size_t input_size;
 	uint8_t header[42]={
 		0x66, 0x4C, 0x61, 0x43,//magic
 		0x80, 0, 0, 0x22,//streaminfo header
@@ -521,8 +523,12 @@ int main(int argc, char *argv[]){
 		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,//md5
 	};
 	uint64_t tot_samples;
-
+	#ifdef _WIN32
+	FILE *fin;
+	#else
+	int fd;
 	struct stat sb;
+	#endif
 	flac_settings set;
 
 	if(argc<6)
@@ -541,14 +547,36 @@ int main(int argc, char *argv[]){
 		goodbye("Error: fopen() output failed\n");
 	fwrite(header, 1, 42, fout);
 
-	//input TODO
+	//input
+	#ifdef _WIN32
+	//for now have windows read the entire input immediately instead of using mmap
+	//reduces accuracy of speed comparison but at least allows windows users to play
+	//for large effort runs this hack shouldn't matter much to speed comparisons
+	if(!(fin=fopen(argv[2], "rb")))
+		goodbye("Error: fopen() input failed\n");
+	if(-1==fseek(fin, 0, SEEK_END))
+		goodbye("Error: fseek() input failed\n");
+	if(-1==ftell(fin))
+		goodbye("Error: ftell() input failed\n");
+	input_size=ftell(fin);
+	rewind(fin);
+	if(!input_size)
+		goodbye("Error: Input empty");
+	if(!(input=malloc(input_size)))
+		goodbye("Error: malloc() input failed\n");
+	if(input_size!=fread(input, 1, input_size, fin))
+		goodbye("Error: fread() input failed\n");
+	fclose(fin);
+	#else
 	if(-1==(fd=open(argv[2], O_RDONLY)))
 		goodbye("Error: open() input failed\n");
 	fstat(fd, &sb);
-	if(MAP_FAILED==(input=mmap(NULL, sb.st_size, PROT_READ, MAP_SHARED, fd, 0)))
+	input_size=sb.st_size;
+	if(MAP_FAILED==(input=mmap(NULL, input_size, PROT_READ, MAP_SHARED, fd, 0)))
 		goodbye("Error: mmap failed\n");
 	close(fd);
-	tot_samples=sb.st_size/(set.channels*(set.bps/8));
+	#endif
+	tot_samples=input_size/(set.channels*(set.bps/8));
 
 	set.work_count=atoi(argv[4]);
 	if(set.work_count<1)
@@ -561,9 +589,9 @@ int main(int argc, char *argv[]){
 	set.do_p=strchr(argv[5], 'p')!=NULL;
 
 	if(strcmp(argv[1], "chunk")==0)
-		chunk_main(argc-5, argv+5, input, sb.st_size, fout, &set);
+		chunk_main(argc-5, argv+5, input, input_size, fout, &set);
 	else if(strcmp(argv[1], "greed")==0)
-		greed_main(argc-5, argv+5, input, sb.st_size, fout, &set);
+		greed_main(argc-5, argv+5, input, input_size, fout, &set);
 	else
 		goodbye(help);
 
