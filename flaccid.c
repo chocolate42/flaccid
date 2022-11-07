@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <getopt.h>
 #include <omp.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -40,9 +41,12 @@ void usleep(unsigned int microseconds){
 
 #include "FLAC/stream_encoder.h"
 
+#define DIFF_COMP_SETTINGS (strcmp(set->comp_anal, set->comp_output)!=0)
+
 typedef struct{
-	int work_count, use_simpler_comp_for_testing, do_tweak, do_merge;/*working variables*/
-	int lax, channels, bps, sample_rate, compression_level, do_p, do_e;/*flac*/
+	int work_count, comp_anal_used, do_tweak, do_merge;/*working variables*/
+	char *comp_anal, *comp_output;
+	int lax, channels, bps, sample_rate;/*flac*/
 	uint32_t minf, maxf;
 	uint8_t hash[16];
 	int blocksize_min, blocksize_max, blocksize_stride;/*chunk*/
@@ -50,20 +54,34 @@ typedef struct{
 	size_t blocks_count;
 } flac_settings;
 
-char *help="Usage:\n flaccid chunk cdda_raw output_file worker_count compression_level blocksize_min blocksize_max blocksize_stride\nOR\n"
-	" flaccid greed cdda_raw output_file worker_count compression_level list,of,blocksizes,to,try\nOR\n"
-	" flaccid peak cdda_raw output_file worker_count compression_level list,of,blocksizes,to,try [0/1 to use simpler compression level for testing]\nOR\n"
-	"Compare to 'flac --force-raw-format --endian=little -channels=2 --bps=16 --sample-rate=44100 --sign=signed --no-padding --no-seektable cdda_raw'\n"
-	"For an apples to apples comparison ensure blocksize matches flac defaults for a given compression level\n";
+char *help=
+	"Usage: flaccid [options]\n"
+	"\nOptions:\n"
+	" --mode mode : Which variable-blocksize algorithm to use. Valid modes: chunk, greed, peakset\n"
+	" --workers integer : The maximum number of encode threads to run simultaenously\n"
+	" --analysis-comp comp_string: Compression settings to use during analysis.\n"
+	" --output-comp comp_string: Compression settings to use during output.\n"
+	" --in infile : Source, pipe unsupported\n"
+	" --out outfile : Destination\n"
+	" --blocksize-list list,of,blocksizes : Blocksizes that a mode is allowed to use for its main\n"
+	"                                       execution. Different modes have different constraints\n"
+	"                                       on valid combinations\n"
+	"\nCompression settings format:\n"
+	" * Mostly follows ./flac interface, but requires settings to be concatenated into a single string\n"
+	" * Compression level must be the first element\n"
+	" * Supported settings: e, m, l, p, q, r (see ./flac -h)\n"
+	" * Adaptive mid-side from ./flac is not supported (-M)\n"
+	" * ie \"5er4\" defines compression level 5, with exhaustive model search and max rice partition order of 4\n"
+	" * Apodization not supported, WIP\n"
+	"\nNotes:\n"
+	" * Adaptive mid-side from ./flac is not supported, so compression levels 1 and 4 are not directly comparable\n\n";
 
-void goodbye(char *s);
 int comp_int_asc(const void *aa, const void *bb);
 int comp_int_desc(const void *aa, const void *bb);
-
-void goodbye(char *s){
-	fprintf(stderr, "%s", s);
-	exit(1);
-}
+size_t fwrite_framestat(const void *ptr, size_t size, FILE *stream, uint32_t *minf, uint32_t *maxf);
+void goodbye(char *s);
+FLAC__StaticEncoder *init_static_encoder(flac_settings *set, int blocksize, char *comp);
+void parse_blocksize_list(char *list, int **res, size_t *res_cnt);
 
 int comp_int_asc(const void *aa, const void *bb){
 	int *a=(int*)aa;
@@ -83,11 +101,81 @@ int comp_int_desc(const void *aa, const void *bb){
 		return a==b?0:-1;
 }
 
-int chunk_main(int argc, char *argv[], int16_t *input, size_t input_size, FILE *fout, flac_settings *set);
-int greed_main(int argc, char *argv[], int16_t *input, size_t input_size, FILE *fout, flac_settings *set);
-int  peak_main(int argc, char *argv[], int16_t *input, size_t input_size, FILE *fout, flac_settings *set);
+size_t fwrite_framestat(const void *ptr, size_t size, FILE *stream, uint32_t *minf, uint32_t *maxf){
+	if(size<*minf)
+		*minf=size;
+	if(size>*maxf)
+		*maxf=size;
+	return fwrite(ptr, 1, size, stream);
+}
+
+void goodbye(char *s){
+	fprintf(stderr, "%s", s);
+	exit(1);
+}
+
+FLAC__StaticEncoder *init_static_encoder(flac_settings *set, int blocksize, char *comp){
+	FLAC__StaticEncoder *r;
+	r=FLAC__static_encoder_new();
+	r->is_variable_blocksize=set->blocksize_min!=set->blocksize_max;
+	if(set->blocksize_max>16384 || (set->sample_rate<=48000 && set->blocksize_max>4608)){
+		//if(!set->lax)
+		//	goodbye("Error: Tried to use a non-subset blocksize without setting --lax\n");
+		FLAC__stream_encoder_set_streamable_subset(r->stream_encoder, false);
+	}
+	FLAC__stream_encoder_set_channels(r->stream_encoder, set->channels);
+	FLAC__stream_encoder_set_bits_per_sample(r->stream_encoder, set->bps);
+	FLAC__stream_encoder_set_sample_rate(r->stream_encoder, set->sample_rate);
+
+	if(comp[0]>='0'&&comp[0]<='8')
+		FLAC__stream_encoder_set_compression_level(r->stream_encoder, comp[0]-'0');
+	if(strchr(comp, 'e'))
+		FLAC__stream_encoder_set_do_exhaustive_model_search(r->stream_encoder, true);
+	if(strchr(comp, 'l'))
+		FLAC__stream_encoder_set_max_lpc_order(r->stream_encoder, atoi(strchr(comp, 'l')+1));
+	if(strchr(comp, 'm'))
+		FLAC__stream_encoder_set_do_mid_side_stereo(r->stream_encoder, true);
+	if(strchr(comp, 'p'))
+		FLAC__stream_encoder_set_do_qlp_coeff_prec_search(r->stream_encoder, true);
+	if(strchr(comp, 'q'))
+		FLAC__stream_encoder_set_qlp_coeff_precision(r->stream_encoder, atoi(strchr(comp, 'q')+1));
+	if(strchr(comp, 'r')&&strchr(comp, ',')){
+		FLAC__stream_encoder_set_min_residual_partition_order(r->stream_encoder, atoi(strchr(comp, 'r')+1));
+		FLAC__stream_encoder_set_max_residual_partition_order(r->stream_encoder, atoi(strchr(comp, ',')+1));
+	}
+	else if(strchr(comp, 'r'))
+		FLAC__stream_encoder_set_max_residual_partition_order(r->stream_encoder, atoi(strchr(comp, 'r')+1));
+
+	FLAC__stream_encoder_set_blocksize(r->stream_encoder, blocksize);/* override compression level blocksize */
+	FLAC__stream_encoder_set_loose_mid_side_stereo(r->stream_encoder, false);/* override adaptive mid-side, this doesn't play nice */
+
+	if(FLAC__static_encoder_init(r)!=FLAC__STREAM_ENCODER_INIT_STATUS_OK)
+		goodbye("Init failed\n");
+	return r;
+}
+
+void parse_blocksize_list(char *list, int **res, size_t *res_cnt){
+	char *cptr=list-1;
+	*res_cnt=0;
+	*res=NULL;
+	do{
+		*res=realloc(*res, sizeof(int)*(*res_cnt+1));
+		(*res)[*res_cnt]=atoi(cptr+1);
+		if((*res)[*res_cnt]<16)
+			goodbye("Error: Blocksize must be at least 16\n");
+		if((*res)[*res_cnt]>65535)
+			goodbye("Error: Blocksize must be at most 65535\n");
+		*res_cnt=*res_cnt+1;
+	}while((cptr=strchr(cptr+1, ',')));
+}
+
+int chunk_main(int16_t *input, size_t input_size, FILE *fout, flac_settings *set);
+int greed_main(int16_t *input, size_t input_size, FILE *fout, flac_settings *set);
+int  peak_main(int16_t *input, size_t input_size, FILE *fout, flac_settings *set);
 
 int main(int argc, char *argv[]){
+	int (*encoder[3])(int16_t*, size_t, FILE*, flac_settings*)={chunk_main, greed_main, peak_main};
+	char *ipath=NULL, *opath=NULL;
 	FILE *fout;
 	int16_t *input;
 	size_t input_size;
@@ -101,6 +189,7 @@ int main(int argc, char *argv[]){
 		0, 0, 0, 0, //lower 32 bits of total samples
 		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,//md5
 	};
+
 	uint64_t tot_samples;
 	#ifdef _WIN32
 	FILE *fin;
@@ -110,22 +199,95 @@ int main(int argc, char *argv[]){
 	#endif
 	flac_settings set;
 
-	if(argc<6)
-		goodbye(help);
+	int c, mode=-1, option_index;
+	static struct option long_options[]={
+		{"help",		 no_argument, 0, 'h'},
+		{"analysis-comp",	required_argument, 0, 256},
+		{"output-comp",	required_argument, 0, 257},
+		{"workers",	required_argument, 0, 'w'},
+		{"in",	required_argument, 0, 'i'},
+		{"out",	required_argument, 0, 'o'},
+		{"mode",	required_argument, 0, 'm'},
+		{"blocksize-list",	required_argument, 0, 258},
+		{0, 0, 0, 0}
+	};
 
 	memset(&set, 0, sizeof(flac_settings));
 	set.bps=16;
 	set.sample_rate=44100;
 	set.channels=2;
-	set.compression_level=5;
+	set.comp_anal="5";
+	set.comp_output="8p";
 	set.blocksize_min=4096;
 	set.blocksize_max=4096;
 	set.minf=UINT32_MAX;
 	set.maxf=0;
 	set.lax=0;
-	set.use_simpler_comp_for_testing=0;
+	set.work_count=1;
 
-	if(!(fout=fopen(argv[3], "wb+")))
+	while (1){
+		if(-1==(c=getopt_long(argc, argv, "hi:m:o:w:", long_options, &option_index)))
+			break;
+		switch(c){
+			case 'h':
+				goodbye(help);
+				break;
+
+			case 'i':
+				ipath=optarg;
+				break;
+
+			case 'm':
+				if(strcmp(optarg, "chunk")==0)
+					mode=0;
+				else if(strcmp(optarg, "greed")==0)
+					mode=1;
+				else if(strcmp(optarg, "peakset")==0)
+					mode=2;
+				else
+					goodbye("Unknown mode\n");
+				break;
+
+			case 'o':
+				opath=optarg;
+				break;
+
+			case 'w':
+				set.work_count=atoi(optarg);
+				if(set.work_count<1)
+					goodbye("Error: Worker count must be >=1, it is the number of encoder cores to use\n");
+				break;
+
+			case 256:
+				set.comp_anal=optarg;
+				break;
+
+			case 257:
+				set.comp_output=optarg;
+				break;
+
+			case 258:
+				parse_blocksize_list(optarg, &(set.blocks), &(set.blocks_count));
+				qsort(set.blocks, set.blocks_count, sizeof(int), comp_int_asc);
+				set.blocksize_min=set.blocks[0];
+				set.blocksize_max=set.blocks[set.blocks_count-1];
+				break;
+		}
+	}
+
+	if(!ipath)
+		goodbye("Error: No input\n");
+
+	if(!opath)/* Add test option with no no output TODO */
+		goodbye("Error: No output\n");
+
+	if(mode==-1)
+		goodbye("Error: No mode specified\n");
+
+	if((mode==0||mode==2)&&set.blocks==NULL)//mov TODO
+		goodbye("Error: This mode requires a blocksize list to be specified\n");
+
+	if(!(fout=fopen(opath, "wb+")))
 		goodbye("Error: fopen() output failed\n");
 	fwrite(header, 1, 42, fout);
 
@@ -134,7 +296,7 @@ int main(int argc, char *argv[]){
 	//for now have windows read the entire input immediately instead of using mmap
 	//reduces accuracy of speed comparison but at least allows windows users to play
 	//for large effort runs this hack shouldn't matter much to speed comparisons
-	if(!(fin=fopen(argv[2], "rb")))
+	if(!(fin=fopen(ipath, "rb")))
 		goodbye("Error: fopen() input failed\n");
 	if(-1==fseek(fin, 0, SEEK_END))
 		goodbye("Error: fseek() input failed\n");
@@ -150,7 +312,7 @@ int main(int argc, char *argv[]){
 		goodbye("Error: fread() input failed\n");
 	fclose(fin);
 	#else
-	if(-1==(fd=open(argv[2], O_RDONLY)))
+	if(-1==(fd=open(ipath, O_RDONLY)))
 		goodbye("Error: open() input failed\n");
 	fstat(fd, &sb);
 	input_size=sb.st_size;
@@ -160,24 +322,7 @@ int main(int argc, char *argv[]){
 	#endif
 	tot_samples=input_size/(set.channels*(set.bps/8));
 
-	set.work_count=atoi(argv[4]);
-	if(set.work_count<1)
-		goodbye("Error: Worker count must be >=1, it is the number of encoder cores to use\n");
-
-	set.compression_level=atoi(argv[5]);
-	if(set.compression_level<0)
-		set.compression_level=0;
-	set.do_e=strchr(argv[5], 'e')!=NULL;
-	set.do_p=strchr(argv[5], 'p')!=NULL;
-
-	if(strcmp(argv[1], "chunk")==0)
-		chunk_main(argc-5, argv+5, input, input_size, fout, &set);
-	else if(strcmp(argv[1], "greed")==0)
-		greed_main(argc-5, argv+5, input, input_size, fout, &set);
-	else if(strcmp(argv[1], "peak")==0)
-		peak_main(argc-5, argv+5, input, input_size, fout, &set);
-	else
-		goodbye(help);
+	encoder[mode](input, input_size, fout, &set);
 
 	/* write finished header */
 	header[ 8]=(set.blocksize_min>>8)&255;
@@ -235,7 +380,6 @@ typedef struct{
 	chunk_enc chunk[SHARD_COUNT];
 	uint32_t curr_chunk[SHARD_COUNT];
 	int status[SHARD_COUNT];
-	uint32_t minframe, maxframe;
 } chunk_worker;
 /*status
 	1: Waiting to be encoded
@@ -245,48 +389,15 @@ typedef struct{
 chunk_enc *chunk_init(chunk_enc *c, unsigned int min, unsigned int max, flac_settings *set);
 void chunk_process(chunk_enc *c, int16_t *input, uint64_t sample_number);
 void chunk_invalidate(chunk_enc *c);
-size_t chunk_analyse(chunk_enc *c, uint32_t *minframe, uint32_t *maxframe);
-void chunk_write(chunk_enc *c, FILE *fout);
-
-FLAC__StaticEncoder *init_static_encoder(flac_settings *set, int blocksize, int is_simple);
-FLAC__StaticEncoder *init_static_encoder(flac_settings *set, int blocksize, int is_simple){
-	FLAC__StaticEncoder *r;
-	r=FLAC__static_encoder_new();
-	r->is_variable_blocksize=set->blocksize_min!=set->blocksize_max;
-	if(set->blocksize_max>16384 || (set->sample_rate<=48000 && set->blocksize_max>4608)){
-		//if(!set->lax)
-		//	goodbye("Error: Tried to use a non-subset blocksize without setting --lax\n");
-		FLAC__stream_encoder_set_streamable_subset(r->stream_encoder, false);
-	}
-	FLAC__stream_encoder_set_channels(r->stream_encoder, set->channels);
-	FLAC__stream_encoder_set_bits_per_sample(r->stream_encoder, set->bps);
-	FLAC__stream_encoder_set_sample_rate(r->stream_encoder, set->sample_rate);
-	if(is_simple){
-		//FLAC__stream_encoder_set_compression_level(r->stream_encoder, set->compression_level);
-		//FLAC__stream_encoder_set_max_residual_partition_order(r->stream_encoder, 0);
-		//FLAC__stream_encoder_set_max_residual_partition_order(r->stream_encoder, 1);
-		FLAC__stream_encoder_set_compression_level(r->stream_encoder, 0);
-	}
-	else{
-		FLAC__stream_encoder_set_compression_level(r->stream_encoder, set->compression_level);
-		if(set->do_p)
-			FLAC__stream_encoder_set_do_qlp_coeff_prec_search(r->stream_encoder, true);
-		if(set->do_e)
-			FLAC__stream_encoder_set_do_exhaustive_model_search(r->stream_encoder, true);
-	}
-	FLAC__stream_encoder_set_blocksize(r->stream_encoder, blocksize);/* override compression level blocksize */
-	FLAC__stream_encoder_set_loose_mid_side_stereo(r->stream_encoder, false);/* override adaptive mid-side */
-	if(FLAC__static_encoder_init(r)!=FLAC__STREAM_ENCODER_INIT_STATUS_OK)
-		goodbye("Init failed\n");
-	return r;
-}
+size_t chunk_analyse(chunk_enc *c);
+void chunk_write(chunk_enc *c, FILE *fout, uint32_t *minf, uint32_t *maxf, size_t *outsize);
 
 chunk_enc *chunk_init(chunk_enc *c, unsigned int min, unsigned int max, flac_settings *set){
 	size_t i;
 	assert(min!=0);
 	assert(max>=min);
 
-	c->enc=init_static_encoder(set, max, 0);
+	c->enc=init_static_encoder(set, max, set->comp_anal);
 	c->child_count=set->blocksize_stride;
 	if(max/c->child_count<min)
 		c->child=NULL;
@@ -323,7 +434,7 @@ void chunk_invalidate(chunk_enc *c){
 }
 
 /* Analyse processed chunk to find best frame combinations */
-size_t chunk_analyse(chunk_enc *c, uint32_t *minframe, uint32_t *maxframe){
+size_t chunk_analyse(chunk_enc *c){
 	size_t children_size=0, i;
 	if(!(c->child)){
 		c->use_this=1;
@@ -331,7 +442,7 @@ size_t chunk_analyse(chunk_enc *c, uint32_t *minframe, uint32_t *maxframe){
 	}
 
 	for(i=0;i<c->child_count;++i)
-		children_size+=chunk_analyse(c->child+i, minframe, maxframe);
+		children_size+=chunk_analyse(c->child+i);
 	if(children_size<c->outbuf_size){
 		c->use_this=0;
 		return children_size;
@@ -345,59 +456,45 @@ size_t chunk_analyse(chunk_enc *c, uint32_t *minframe, uint32_t *maxframe){
 }
 
 /* Write best combination of frames in correct order */
-void chunk_write(chunk_enc *c, FILE *fout){
+void chunk_write(chunk_enc *c, FILE *fout, uint32_t *minf, uint32_t *maxf, size_t *outsize){
 	size_t i;
 	if(c->use_this)
-		fwrite(c->outbuf, 1, c->outbuf_size, fout);
+		*outsize+=fwrite_framestat(c->outbuf, c->outbuf_size, fout, minf, maxf);
 	else{
 		assert(c->child);
 		for(i=0;i<c->child_count;++i)
-			chunk_write(c->child+i, fout);
+			chunk_write(c->child+i, fout, minf, maxf, outsize);
 	}
 }
 
-int chunk_main(int argc, char *argv[], int16_t *input, size_t input_size, FILE *fout, flac_settings *set){
+int chunk_main(int16_t *input, size_t input_size, FILE *fout, flac_settings *set){
 	unsigned int bytes_per_sample;
 	chunk_worker *work;
 
 	//input thread variables
 	int i;
-	size_t input_chunk_size;
+	size_t input_chunk_size, block_index;
 	uint32_t curr_chunk_in=0, last_chunk, last_chunk_sample_count;
 	omp_lock_t curr_chunk_lock;
 	//output thread variables
 	int output_skipped=0;
 	uint32_t curr_chunk_out=0;
-	int blocksize_min_input;
+	double effort_anal, effort_output;
+	size_t outsize=42;
 
-	if(argc!=4)
-		goodbye(help);
+	if(DIFF_COMP_SETTINGS)
+		goodbye("Error: Different comp settings not implemented for chunk mode\n");
 
-	blocksize_min_input=atoi(argv[1]);
-	if(blocksize_min_input<16)
-		goodbye("Error: blocksize_min must be >=16\n");
-	set->blocksize_max=atoi(argv[2]);
-	set->blocksize_stride=atoi(argv[3]);
+	if(set->blocks_count==1)
+		goodbye("Error: Chunk mode needs multiple blocksizes to work with\n");
 
-	if(blocksize_min_input>set->blocksize_max)
-		goodbye("Error: Min blocksize cannot be greater than max blocksize\n");
-	if(set->blocksize_max>=65536)
-		goodbye("Error: Max blocksize must be <65536\n");
-	if(blocksize_min_input==set->blocksize_max){
-		set->blocksize_min=blocksize_min_input;
-		set->blocksize_stride=2;/*needs to be 2, hack*/
-	}
-	else{
-		if(set->blocksize_stride<2)
-			goodbye("blocksize_stride is the multiplier step between the blocksizes in use, which must be an integer >=2\n"
-				"For example min=256, max=4096, stride=4 defines blocksizes 256, 1024, 4096\n");
+	set->blocksize_stride=set->blocks[1]/set->blocks[0];
+	if(set->blocksize_stride<2)
+		goodbye("Error: Chunk mode requires blocksizes to be a fixed multiple away from each other, >=2\n");
 
-		set->blocksize_min=set->blocksize_max;
-		while((set->blocksize_min/set->blocksize_stride)>0 && (set->blocksize_min/set->blocksize_stride)>=blocksize_min_input){
-			if(set->blocksize_min%set->blocksize_stride)
-				goodbye("Error: Min/max blocksizes must divide neatly by stride\n");
-			set->blocksize_min/=set->blocksize_stride;
-		}
+	for(block_index=1;block_index<set->blocks_count;++block_index){
+		if(set->blocks[block_index-1]*set->blocksize_stride!=set->blocks[block_index])
+			goodbye("Error: Chunk mode requires blocksizes to be a fixed multiple away from each other, >=2\n");
 	}
 
 	bytes_per_sample=set->bps/8;
@@ -409,9 +506,6 @@ int chunk_main(int argc, char *argv[], int16_t *input, size_t input_size, FILE *
 	last_chunk=(input_size/input_chunk_size)+(input_size%input_chunk_size?0:-1);
 	last_chunk_sample_count=(input_size%input_chunk_size)/(set->channels*bytes_per_sample);
 
-	printf("flaccid -%d%s%s\n", set->compression_level, set->do_e?"e":"", set->do_p?"p":"");
-
-
 	//seektable dummy TODO
 
 	work=malloc(sizeof(chunk_worker)*set->work_count);
@@ -422,8 +516,6 @@ int chunk_main(int argc, char *argv[], int16_t *input, size_t input_size, FILE *
 			work[i].status[h]=1;
 			work[i].curr_chunk[h]=UINT32_MAX;
 		}
-		work[i].maxframe=0;
-		work[i].minframe=UINT32_MAX;
 	}
 
 	omp_set_num_threads(set->work_count+2);
@@ -476,7 +568,7 @@ int chunk_main(int argc, char *argv[], int16_t *input, size_t input_size, FILE *
 						}
 					}
 					if(h>-1){//do write
-						chunk_write(&(work[j].chunk[h]), fout);
+						chunk_write(&(work[j].chunk[h]), fout, &(set->minf), &(set->maxf), &outsize);
 						++curr_chunk_out;
 						#pragma omp atomic
 						work[j].status[h]--;
@@ -518,15 +610,10 @@ int chunk_main(int argc, char *argv[], int16_t *input, size_t input_size, FILE *
 							exit(1);
 						}
 						work[omp_get_thread_num()].chunk[h].use_this=1;
-
-						if(work[omp_get_thread_num()].chunk[h].outbuf_size < work[omp_get_thread_num()].minframe)
-							work[omp_get_thread_num()].minframe=work[omp_get_thread_num()].chunk[h].outbuf_size;
-						if(work[omp_get_thread_num()].chunk[h].outbuf_size > work[omp_get_thread_num()].maxframe)
-							work[omp_get_thread_num()].maxframe=work[omp_get_thread_num()].chunk[h].outbuf_size;
 					}
 					else{//do a full chunk
 						chunk_process(&(work[omp_get_thread_num()].chunk[h]), input+work[omp_get_thread_num()].curr_chunk[h]*(input_chunk_size/bytes_per_sample), set->blocksize_max*work[omp_get_thread_num()].curr_chunk[h]);
-						chunk_analyse(&(work[omp_get_thread_num()].chunk[h]), &(work[omp_get_thread_num()].minframe), &(work[omp_get_thread_num()].maxframe));
+						chunk_analyse(&(work[omp_get_thread_num()].chunk[h]));
 					}
 					#pragma omp atomic
 					work[omp_get_thread_num()].status[h]++;
@@ -539,13 +626,18 @@ int chunk_main(int argc, char *argv[], int16_t *input, size_t input_size, FILE *
 	}
 	#pragma omp barrier
 
-	//update header
-	for(i=0;i<set->work_count;++i){
-		if(work[i].curr_chunk[0]!=UINT32_MAX && work[i].minframe < set->minf)
-			set->minf=work[i].minframe;
-		if(work[i].curr_chunk[0]!=UINT32_MAX && work[i].maxframe > set->maxf)
-			set->maxf=work[i].maxframe;
+	effort_anal=set->blocks_count;
+	effort_output=1;
+	if(!DIFF_COMP_SETTINGS){
+		effort_output=effort_anal;
+		effort_anal=0;
 	}
+
+	printf("chunk\t%s\t%s\t%u", set->comp_anal, set->comp_output, set->blocks[0]);
+	for(block_index=1;block_index<set->blocks_count;++block_index)
+		printf(",%u", set->blocks[block_index]);
+	printf("\t%.3f\t%.3f\t%zu\n", effort_anal, effort_output, outsize);
+
 	return 0;
 }
 /* end of chunk mode code */
@@ -563,42 +655,25 @@ typedef struct{
 	size_t genc_count;
 } greed_controller;
 
-int greed_main(int argc, char *argv[], int16_t *input, size_t input_size, FILE *fout, flac_settings *set){
-	char *cptr;
+int greed_main(int16_t *input, size_t input_size, FILE *fout, flac_settings *set){
 	size_t i;
 	uint64_t curr_sample, tot_samples=input_size/(set->channels*(set->bps/8));
 	greed_controller greed;
 	MD5_CTX ctx;
+	FLAC__StaticEncoder *oenc;
+	double effort_anal, effort_output;
+	size_t effort_anal_run=0, outsize=42;
+
 	MD5_Init(&ctx);
-
-	if(argc!=2)
-		goodbye(help);
-
-	printf("greed mode currently single-threaded\n");
-
-	cptr=argv[1]-1;
-	set->blocks_count=0;
-	set->blocks=NULL;
-	do{
-		set->blocks=realloc(set->blocks, sizeof(int)*(set->blocks_count+1));
-		set->blocks[set->blocks_count]=atoi(cptr+1);
-		if(set->blocks[set->blocks_count]<16)
-			goodbye("Error: Blocksize must be at least 16\n");
-		if(set->blocks[set->blocks_count]>65535)
-			goodbye("Error: Blocksize must be at most 65535\n");
-		printf("blocksize %d\n", set->blocks[set->blocks_count]);
-		++set->blocks_count;
-	}while((cptr=strchr(cptr+1, ',')));
+	fprintf(stderr, "greed mode currently single-threaded\n");
 
 	//blocks sorted descending should help occupancy of multithreading
 	qsort(set->blocks, set->blocks_count, sizeof(int), comp_int_desc);
-	set->blocksize_max=set->blocks[0];
-	set->blocksize_min=set->blocks[set->blocks_count-1];
 
 	greed.genc=malloc(set->blocks_count*sizeof(greed_encoder));
 	greed.genc_count=set->blocks_count;
 	for(i=0;i<set->blocks_count;++i)
-		greed.genc[i].enc=init_static_encoder(set, set->blocks[i], 0);
+		greed.genc[i].enc=init_static_encoder(set, set->blocks[i], set->comp_anal);
 
 	for(curr_sample=0;curr_sample<tot_samples;){
 		size_t skip=0;
@@ -607,7 +682,6 @@ int greed_main(int argc, char *argv[], int16_t *input, size_t input_size, FILE *
 				FLAC__static_encoder_process_frame_bps16_interleaved(greed.genc[i].enc, input+(curr_sample*set->channels), FLAC__stream_encoder_get_blocksize(greed.genc[i].enc->stream_encoder), curr_sample, &(greed.genc[i].outbuf), &(greed.genc[i].outbuf_size));
 				greed.genc[i].frame_efficiency=greed.genc[i].outbuf_size;
 				greed.genc[i].frame_efficiency/=FLAC__stream_encoder_get_blocksize(greed.genc[i].enc->stream_encoder);
-				printf("frame efficiency: %f\n", greed.genc[i].frame_efficiency);
 			}
 			else{
 				greed.genc[i].frame_efficiency=9999.0;
@@ -615,13 +689,11 @@ int greed_main(int argc, char *argv[], int16_t *input, size_t input_size, FILE *
 			}
 		}
 		if(skip==greed.genc_count){//partial frame at end
-			FLAC__static_encoder_process_frame_bps16_interleaved(greed.genc[0].enc, input+(curr_sample*set->channels), tot_samples-curr_sample, curr_sample, &(greed.genc[0].outbuf), &(greed.genc[0].outbuf_size));
+			oenc=init_static_encoder(set, (tot_samples-curr_sample)<16?16:(tot_samples-curr_sample), set->comp_output);
+			FLAC__static_encoder_process_frame_bps16_interleaved(oenc, input+(curr_sample*set->channels), tot_samples-curr_sample, curr_sample, &(greed.genc[0].outbuf), &(greed.genc[0].outbuf_size));
 			MD5_Update(&ctx, ((void*)input)+curr_sample*set->channels*(set->bps/8), (tot_samples-curr_sample)*set->channels*(set->bps/8));
-			fwrite(greed.genc[0].outbuf, 1, greed.genc[0].outbuf_size, fout);
-			if(greed.genc[0].outbuf_size<set->minf)
-				set->minf=greed.genc[0].outbuf_size;
-			if(greed.genc[0].outbuf_size>set->maxf)
-				set->maxf=greed.genc[0].outbuf_size;
+			outsize+=fwrite_framestat(greed.genc[0].outbuf, greed.genc[0].outbuf_size, fout, &(set->minf), &(set->maxf));
+			FLAC__static_encoder_delete(oenc);
 			curr_sample=tot_samples;
 		}
 		else{
@@ -635,15 +707,37 @@ int greed_main(int argc, char *argv[], int16_t *input, size_t input_size, FILE *
 			}
 			assert(smallest_index!=greed.genc_count);
 			MD5_Update(&ctx, ((void*)input)+curr_sample*set->channels*(set->bps/8), FLAC__stream_encoder_get_blocksize(greed.genc[smallest_index].enc->stream_encoder)*set->channels*(set->bps/8));
-			fwrite(greed.genc[smallest_index].outbuf, 1, greed.genc[smallest_index].outbuf_size, fout);
-			if(greed.genc[smallest_index].outbuf_size<set->minf)
-				set->minf=greed.genc[smallest_index].outbuf_size;
-			if(greed.genc[smallest_index].outbuf_size>set->maxf)
-				set->maxf=greed.genc[smallest_index].outbuf_size;
+			if(DIFF_COMP_SETTINGS){
+				oenc=init_static_encoder(set, set->blocks[smallest_index], set->comp_output);
+				FLAC__static_encoder_process_frame_bps16_interleaved(oenc, input+(curr_sample*set->channels), set->blocks[smallest_index], curr_sample, &(greed.genc[smallest_index].outbuf), &(greed.genc[smallest_index].outbuf_size));
+				outsize+=fwrite_framestat(greed.genc[smallest_index].outbuf, greed.genc[smallest_index].outbuf_size, fout, &(set->minf), &(set->maxf));
+				FLAC__static_encoder_delete(oenc);
+			}
+			else
+				outsize+=fwrite_framestat(greed.genc[smallest_index].outbuf, greed.genc[smallest_index].outbuf_size, fout, &(set->minf), &(set->maxf));
 			curr_sample+=FLAC__stream_encoder_get_blocksize(greed.genc[smallest_index].enc->stream_encoder);
 		}
+		++effort_anal_run;
 	}
 	MD5_Final(set->hash, &ctx);
+
+	effort_anal=0;
+	for(i=0;i<set->blocks_count;++i)
+		effort_anal+=set->blocks[i];
+	effort_anal*=effort_anal_run;
+	effort_anal/=tot_samples;
+
+	effort_output=1;
+	if(!DIFF_COMP_SETTINGS){
+		effort_output=effort_anal;
+		effort_anal=0;
+	}
+
+	qsort(set->blocks, set->blocks_count, sizeof(int), comp_int_asc);
+	printf("greed\t%s\t%s\t%u", set->comp_anal, set->comp_output, set->blocks[0]);
+	for(i=1;i<set->blocks_count;++i)
+		printf(",%u", set->blocks[i]);
+	printf("\t%.3f\t%.3f\t%zu\n", effort_anal, effort_output, outsize);
 
 	return 0;
 }
@@ -664,56 +758,37 @@ typedef struct{
 	void *outbuf;
 } peak_hunter;
 
-int peak_main(int argc, char *argv[], int16_t *input, size_t input_size, FILE *fout, flac_settings *set){
-	char *cptr;
+int peak_main(int16_t *input, size_t input_size, FILE *fout, flac_settings *set){
 	int k;
 	size_t effort=0, i, j, *step, step_count;
 	size_t *frame_results, *running_results;
 	uint8_t *running_step;
 	size_t window_size, window_size_check=0;
 	size_t curr_sample=0;
-	size_t outsize=0;
+	size_t outsize=42;
 	size_t tot_samples;
 	size_t effort_print=0;
 	frame_list *frame=NULL, *frame_next;
 	peak_hunter *work;
 	FLAC__StaticEncoder *encout;
-
-	if(argc!=3)
-		goodbye(help);
+	double effort_anal, effort_output;
 
 	tot_samples=input_size/(set->channels*(set->bps/8));
-
-	set->use_simpler_comp_for_testing=atoi(argv[2]);
-	assert(set->use_simpler_comp_for_testing==0 || set->use_simpler_comp_for_testing==1);
-
-	cptr=argv[1]-1;
-	set->blocks_count=0;
-	set->blocks=NULL;
-	do{
-		set->blocks=realloc(set->blocks, sizeof(int)*(set->blocks_count+1));
-		set->blocks[set->blocks_count]=atoi(cptr+1);
-		if(set->blocks[set->blocks_count]<16)
-			goodbye("Error: Blocksize must be at least 16\n");
-		if(set->blocks[set->blocks_count]>65535)
-			goodbye("Error: Blocksize must be at most 65535\n");
-		++set->blocks_count;
-	}while((cptr=strchr(cptr+1, ',')));
 
 	if(set->blocks_count==1)
 		goodbye("Error: At least two blocksizes must be available\n");
 	if(set->blocks_count>255)
 		goodbye("Error: Implementation limited to up to 255 blocksizes. This is also just an insane heat-death-of-the-universe setting\n");
 
-	qsort(set->blocks, set->blocks_count, sizeof(int), comp_int_asc);
-	set->blocksize_min=set->blocks[0];
-	set->blocksize_max=set->blocks[set->blocks_count-1];
-
 	for(i=1;i<set->blocks_count;++i){
 		if(set->blocks[i]%set->blocks[0])
 			goodbye("Error: All blocksizes must be a multiple of the minimum blocksize\n");
 	}
 	window_size=tot_samples/set->blocks[0];
+	if(!window_size)
+		goodbye("Error: Input too small\n");
+	if(tot_samples-(window_size*set->blocks[0])<16)//ensure partial end is valid
+		--window_size;
 	if(!window_size)
 		goodbye("Error: Input too small\n");
 
@@ -730,8 +805,6 @@ int peak_main(int argc, char *argv[], int16_t *input, size_t input_size, FILE *f
 	for(i=0;i<step_count;++i)
 		effort+=step[i];
 
-	printf("Peakset threads %d blocksize_min %u effort %zu window_size %zu\n", set->work_count, set->blocks[0], effort, window_size);
-
 	frame_results=malloc(sizeof(size_t)*step_count*(window_size+1));
 	running_results=malloc(sizeof(size_t)*(window_size+1));
 	running_step=malloc(sizeof(size_t)*(window_size+1));
@@ -741,7 +814,7 @@ int peak_main(int argc, char *argv[], int16_t *input, size_t input_size, FILE *f
 	work=malloc(sizeof(peak_hunter)*set->work_count);
 	for(j=0;j<step_count;++j){
 		for(k=0;k<set->work_count;++k)
-			work[k].enc=init_static_encoder(set, set->blocks[j], set->use_simpler_comp_for_testing);
+			work[k].enc=init_static_encoder(set, set->blocks[j], set->comp_anal);
 		#pragma omp parallel for num_threads(set->work_count)
 		for(i=0;i<window_size-(step[j]-1);++i){
 			FLAC__static_encoder_process_frame_bps16_interleaved(work[omp_get_thread_num()].enc,
@@ -758,7 +831,7 @@ int peak_main(int argc, char *argv[], int16_t *input, size_t input_size, FILE *f
 		for(k=0;k<set->work_count;++k)
 			FLAC__static_encoder_delete(work[k].enc);
 		effort_print+=step[j];
-		printf("Processed %zu/%zu\n", effort_print, effort);
+		fprintf(stderr, "Processed %zu/%zu\n", effort_print, effort);
 	}
 
 	/* analyse stats */
@@ -796,28 +869,24 @@ int peak_main(int argc, char *argv[], int16_t *input, size_t input_size, FILE *f
 	assert(i==0);
 	assert(window_size_check==window_size);
 
-	//if used simpler settings for analysis, encode properly here
-	//store encoded frames as most/all of these are likely to be used
-	if(set->use_simpler_comp_for_testing){
-		size_t fi=0;
-		for(frame_next=frame;frame_next;){
-			printf("Encode frame %zu\n", fi);
-			if(!(frame_next->outbuf)){//encode if never encoded before
-				void *tmpbuf;
-				encout=init_static_encoder(set, frame_next->blocksize, 0);
-				FLAC__static_encoder_process_frame_bps16_interleaved(encout,
-					input+(curr_sample*set->channels),
-					frame_next->blocksize,
-					curr_sample,
-					&tmpbuf,
-					&(frame_next->outbuf_size)
-				);
-				frame_next->outbuf=malloc(frame_next->outbuf_size);
-				FLAC__static_encoder_delete(encout);
-			}
-			outsize+=fwrite(frame_next->outbuf, 1, frame_next->outbuf_size, fout);
+	//if used simpler settings for analysis, encode properly here to get comp_output sizes
+	//store encoded frames as most/all of these are likely to be used depending on how much tweaking is done
+	if(DIFF_COMP_SETTINGS){
+		curr_sample=0;
+		for(frame_next=frame;frame_next;frame_next=frame_next->next){
+			void *tmpbuf;
+			encout=init_static_encoder(set, frame_next->blocksize, set->comp_output);
+			FLAC__static_encoder_process_frame_bps16_interleaved(encout,
+				input+(curr_sample*set->channels),
+				frame_next->blocksize,
+				curr_sample,
+				&tmpbuf,
+				&(frame_next->outbuf_size)
+			);
+			frame_next->outbuf=malloc(frame_next->outbuf_size);
+			memcpy(frame_next->outbuf, tmpbuf, frame_next->outbuf_size);
+			FLAC__static_encoder_delete(encout);
 			curr_sample+=frame_next->blocksize;
-			frame_next=frame_next->next;
 		}
 	}
 
@@ -830,7 +899,7 @@ int peak_main(int argc, char *argv[], int16_t *input, size_t input_size, FILE *f
 	for(frame_next=frame;frame_next;frame_next=frame_next->next){
 		if(!(frame_next->outbuf)){//encode if not stored
 			size_t comp;
-			encout=init_static_encoder(set, frame_next->blocksize, 0);
+			encout=init_static_encoder(set, frame_next->blocksize, set->comp_output);
 			FLAC__static_encoder_process_frame_bps16_interleaved(encout,
 				input+(curr_sample*set->channels),
 				frame_next->blocksize,
@@ -838,23 +907,23 @@ int peak_main(int argc, char *argv[], int16_t *input, size_t input_size, FILE *f
 				&(frame_next->outbuf),
 				&(comp)
 			);
-			if(set->use_simpler_comp_for_testing==0)
+			if(!DIFF_COMP_SETTINGS)
 				assert(frame_next->outbuf_size==comp);
-			outsize+=fwrite(frame_next->outbuf, 1, frame_next->outbuf_size, fout);
+			outsize+=fwrite_framestat(frame_next->outbuf, frame_next->outbuf_size, fout, &(set->minf), &(set->maxf));
 			FLAC__static_encoder_delete(encout);
 		}
 		else
-			outsize+=fwrite(frame_next->outbuf, 1, frame_next->outbuf_size, fout);
+			outsize+=fwrite_framestat(frame_next->outbuf, frame_next->outbuf_size, fout, &(set->minf), &(set->maxf));
 
 		curr_sample+=frame_next->blocksize;
 	}
-	if(set->use_simpler_comp_for_testing==0)
-		assert(outsize==running_results[window_size]);
+	if(!DIFF_COMP_SETTINGS)
+		assert(outsize==(running_results[window_size]+42));
 
 	if(tot_samples-curr_sample){/* partial end frame */
 		void *partial_outbuf;
 		size_t partial_outbuf_size;
-		encout=init_static_encoder(set, set->blocksize_max, 0);
+		encout=init_static_encoder(set, set->blocksize_max, set->comp_output);
 		FLAC__static_encoder_process_frame_bps16_interleaved(encout,
 			input+(curr_sample*set->channels),
 			tot_samples-curr_sample,
@@ -862,10 +931,25 @@ int peak_main(int argc, char *argv[], int16_t *input, size_t input_size, FILE *f
 			&(partial_outbuf),
 			&(partial_outbuf_size)
 		);
-		outsize+=fwrite(partial_outbuf, 1, partial_outbuf_size, fout);
+		outsize+=fwrite_framestat(partial_outbuf, partial_outbuf_size, fout, &(set->minf), &(set->maxf));
 		FLAC__static_encoder_delete(encout);
 	}
 	MD5(((void*)input), input_size, set->hash);
+
+	effort_anal=0;
+	for(i=0;i<set->blocks_count;++i)
+		effort_anal+=step[i];
+	effort_output=1;
+	if(!DIFF_COMP_SETTINGS){
+		effort_output+=effort_anal;
+		effort_anal=0;
+	}
+
+	printf("peakset\t%s\t%s\t%u", set->comp_anal, set->comp_output, set->blocks[0]);
+	for(i=1;i<set->blocks_count;++i)
+		printf(",%u", set->blocks[i]);
+	printf("\t%.3f\t%.3f\t%zu\n", effort_anal, effort_output, outsize);
+
 	return 0;
 }
 /* end of peak mode code */
