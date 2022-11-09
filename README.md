@@ -27,6 +27,5 @@ The changes boil down to:
 
 ## flaccid jank
 
-* Argument worker_count defines how many encode threads exist, but there are also two additional threads (one for writing output, one for MD5 hashing, input is transparent with mmap which the kernel deals with). The MD5 thread is currently not optimal as it blasts ahead causing unnecessary cache misses
-* Argument compression_level is the preset number, optionally appended with e and/or p
+* Worker count is the maximum number of encode threads to use simultaneouusly, but depending on the mode it's not necessarily the total number of simultaneous threads. I/O and MD5 may have their own threads and how they act may not be optimal, it's implemented however was convenient
 * Raw CDDA input only just because it was convenient
