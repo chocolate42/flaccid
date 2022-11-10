@@ -56,6 +56,7 @@ typedef struct{
 typedef struct flist flist;
 
 struct flist{
+	int is_outbuf_alloc;
 	uint8_t *outbuf;
 	size_t outbuf_size;
 	size_t blocksize;
@@ -132,6 +133,7 @@ void goodbye(char *s){
 
 FLAC__StaticEncoder *init_static_encoder(flac_settings *set, int blocksize, char *comp, char *apod){
 	FLAC__StaticEncoder *r;
+
 	r=FLAC__static_encoder_new();
 	r->is_variable_blocksize=set->blocksize_min!=set->blocksize_max;
 	if(set->blocksize_max>16384 || (set->sample_rate<=48000 && set->blocksize_max>4608)){
@@ -170,6 +172,7 @@ FLAC__StaticEncoder *init_static_encoder(flac_settings *set, int blocksize, char
 
 	if(FLAC__static_encoder_init(r)!=FLAC__STREAM_ENCODER_INIT_STATUS_OK)
 		goodbye("Init failed\n");
+
 	return r;
 }
 
@@ -190,6 +193,8 @@ void parse_blocksize_list(char *list, int **res, size_t *res_cnt){
 
 //Tweak partition of adjacent blocksizes to look for more efficient form
 void tweak(size_t *effort, size_t *saved, flac_settings *set, char *comp, char *apod, flist *f, int16_t *input, size_t amount);
+void tweak_pass(flist *head, flac_settings *set, size_t *teff, size_t *tsaved, int16_t *input);
+void tweak_pass_mt(flist *head, flac_settings *set, size_t *teff, size_t *tsaved, int16_t *input);
 static void pairtest(size_t *effort, size_t *saved, flac_settings *set, char *comp, char *apod, flist *f, int16_t *input, size_t newsplit);
 
 static void pairtest(size_t *effort, size_t *saved, flac_settings *set, char *comp, char *apod, flist *f, int16_t *input, size_t newsplit){
@@ -227,13 +232,22 @@ static void pairtest(size_t *effort, size_t *saved, flac_settings *set, char *co
 
 	if((abuf_size+bbuf_size)<(f->outbuf_size+f->next->outbuf_size)){
 		(*saved)+=((f->outbuf_size+f->next->outbuf_size)-(abuf_size+bbuf_size));
-
-		f->outbuf=realloc(f->outbuf, abuf_size);
+		if(f->is_outbuf_alloc)
+			f->outbuf=realloc(f->outbuf, abuf_size);
+		else{
+			f->outbuf=malloc(abuf_size);
+			f->is_outbuf_alloc=1;
+		}
 		memcpy(f->outbuf, abuf, abuf_size);
 		f->outbuf_size=abuf_size;
 		f->blocksize=newsplit;
 
-		f->next->outbuf=realloc(f->next->outbuf, bbuf_size);
+		if(f->next->is_outbuf_alloc)
+			f->next->outbuf=realloc(f->next->outbuf, bbuf_size);
+		else{
+			f->next->outbuf=malloc(bbuf_size);
+			f->next->is_outbuf_alloc=1;
+		}
 		memcpy(f->next->outbuf, bbuf, bbuf_size);
 		f->next->outbuf_size=bbuf_size;
 		f->next->blocksize=bsize;
@@ -248,7 +262,7 @@ void flist_initial_output_encode(flist *frame, flac_settings *set, int16_t *inpu
 	flist *frame_curr;
 	void *tmpbuf;
 	for(frame_curr=frame;frame_curr;frame_curr=frame_curr->next){
-		if(set->diff_comp_settings){/*encode if settings different and if there's no existing result*/
+		if(set->diff_comp_settings){/*encode if settings different*/
 			enc=init_static_encoder(set, frame_curr->blocksize, set->comp_output, set->apod_output);
 			FLAC__static_encoder_process_frame_bps16_interleaved(enc,
 				input+(frame_curr->curr_sample*set->channels),
@@ -258,6 +272,7 @@ void flist_initial_output_encode(flist *frame, flac_settings *set, int16_t *inpu
 				&(frame_curr->outbuf_size)
 			);
 			frame_curr->outbuf=malloc(frame_curr->outbuf_size);
+			frame_curr->is_outbuf_alloc=1;
 			memcpy(frame_curr->outbuf, tmpbuf, frame_curr->outbuf_size);
 			FLAC__static_encoder_delete(enc);
 		}
@@ -292,6 +307,42 @@ void tweak(size_t *effort, size_t *saved, flac_settings *set, char *comp, char *
 	pairtest(effort, saved, set, comp, apod, f, input, f->blocksize-amount);
 	//if(eff==*effort)//If one direction improved efficiency, it's unlikely the other way will?
 	pairtest(effort, saved, set, comp, apod, f, input, f->blocksize+amount);
+}
+
+void tweak_pass(flist *head, flac_settings *set, size_t *teff, size_t *tsaved, int16_t *input){
+	flist *frame_curr;
+	int ind;
+	for(ind=0;ind<set->tweak;++ind){//for every pass
+		for(frame_curr=head;frame_curr&&frame_curr->next;frame_curr=frame_curr->next)
+			tweak(teff, tsaved, set, set->comp_output, set->apod_output, frame_curr, input, set->blocksize_min/(ind+2));
+	}
+}
+
+void tweak_pass_mt(flist *head, flac_settings *set, size_t *teff, size_t *tsaved, int16_t *input){
+	flist *frame_curr;
+	flist **array;
+	int ind;
+	size_t cnt=0, i;
+	//build pointer array to make omp code easy
+	for(frame_curr=head;frame_curr;frame_curr=frame_curr->next)
+		++cnt;
+	array=malloc(sizeof(flist*)*cnt);
+	cnt=0;
+	for(frame_curr=head;frame_curr;frame_curr=frame_curr->next)
+		array[cnt++]=frame_curr;
+	for(ind=0;ind<set->tweak;++ind){//for every pass
+		#pragma omp parallel for num_threads(set->work_count)
+		for(i=0;i<cnt/2;++i){//even
+			tweak(teff, tsaved, set, set->comp_output, set->apod_output, array[2*i], input, set->blocksize_min/(ind+2));
+		}
+		#pragma omp barrier
+		#pragma omp parallel for num_threads(set->work_count)
+		for(i=0;i<(cnt-1)/2;++i){//odd
+			tweak(teff, tsaved, set, set->comp_output, set->apod_output, array[(2*i)+1], input, set->blocksize_min/(ind+2));
+		}
+		#pragma omp barrier
+	}
+	free(array);
 }
 
 int chunk_main(int16_t *input, size_t input_size, FILE *fout, flac_settings *set);
@@ -550,7 +601,6 @@ typedef struct{
 	2: Waiting for output
 */
 
-
 size_t chunk_analyse(chunk_enc *c);
 chunk_enc *chunk_init(chunk_enc *c, unsigned int min, unsigned int max, flac_settings *set);
 void chunk_invalidate(chunk_enc *c);
@@ -627,6 +677,7 @@ flist *chunk_list(chunk_enc *c, flist *f, flist **head){
 	size_t i;
 	if(c->use_this){
 		tail=malloc(sizeof(flist));
+		tail->is_outbuf_alloc=0;
 		tail->outbuf=c->outbuf;
 		tail->outbuf_size=c->outbuf_size;
 		tail->blocksize=c->blocksize;
@@ -701,12 +752,12 @@ int chunk_main(int16_t *input, size_t input_size, FILE *fout, flac_settings *set
 				goodbye("Error: Chunk mode requires blocksizes to be a fixed multiple away from each other, >=2\n");
 		}
 	}
-	else{
-		/*hack to used chunk code for a single fixed blocksize*/
+	else{/*hack to use chunk code for a single fixed blocksize*/
 		set->blocksize_stride=2;//dummy, anything >1
 		set->apod_anal=set->apod_output;
 		set->comp_anal=set->comp_output;
 		set->diff_comp_settings=0;
+		//tweak does nothing as it only works within chunks, which only contain 1 frame
 	}
 
 	bytes_per_sample=set->bps/8;
@@ -782,8 +833,11 @@ int chunk_main(int16_t *input, size_t input_size, FILE *fout, flac_settings *set
 					if(h>-1){//do write
 						if(curr_chunk_out==last_chunk)//clean TODO, chunk_write only used as legacy code
 							chunk_write(set, &(work[j].chunk[h]), input, fout, &(set->minf), &(set->maxf), &outsize);
-						else
+						else{
 							flist_write(work[j].chunk[h].list, set, input, &outsize, fout);
+							//flist_delete(
+							work[j].chunk[h].list=NULL;
+						}
 						++curr_chunk_out;
 						#pragma omp atomic
 						work[j].status[h]--;
@@ -834,13 +888,8 @@ int chunk_main(int16_t *input, size_t input_size, FILE *fout, flac_settings *set
 						chunk_list(work[omp_get_thread_num()].chunk+h, NULL, &(work[omp_get_thread_num()].chunk[h].list));
 						flist_initial_output_encode(work[omp_get_thread_num()].chunk[h].list, set, input);
 						if(set->tweak){
-							int ind;
 							size_t teff=0, tsaved=0;
-							flist *frame_curr;
-							for(ind=0;ind<set->tweak;++ind){
-								for(frame_curr=work[omp_get_thread_num()].chunk[h].list;frame_curr && frame_curr->next;frame_curr=frame_curr->next)
-									tweak(&teff, &tsaved, set, set->comp_output, set->apod_output, frame_curr, input, set->blocksize_min/(ind+2));
-							}
+							tweak_pass(work[omp_get_thread_num()].chunk[h].list, set, &teff, &tsaved, input);
 							effort_tweak=teff;
 							effort_tweak/=tot_samples;
 						}
@@ -987,6 +1036,8 @@ typedef struct{
 	void *outbuf;
 } peak_hunter;
 
+
+
 int peak_main(int16_t *input, size_t input_size, FILE *fout, flac_settings *set){
 	int k;
 	size_t effort=0, i, j, *step, step_count;
@@ -1084,6 +1135,7 @@ int peak_main(int16_t *input, size_t input_size, FILE *fout, flac_settings *set)
 		size_t frame_at=i-step[running_step[i]];
 		frame_curr=frame;
 		frame=malloc(sizeof(flist));
+		frame->is_outbuf_alloc=0;
 		frame->curr_sample=frame_at*set->blocksize_min;
 		frame->blocksize=set->blocks[running_step[i]];
 		frame->outbuf=NULL;
@@ -1102,12 +1154,8 @@ int peak_main(int16_t *input, size_t input_size, FILE *fout, flac_settings *set)
 	flist_initial_output_encode(frame, set, input);
 
 	if(set->tweak){
-		int ind;
 		size_t teff=0, tsaved=0;
-		for(ind=0;ind<set->tweak;++ind){
-			for(frame_curr=frame;frame_curr && frame_curr->next;frame_curr=frame_curr->next)
-				tweak(&teff, &tsaved, set, set->comp_output, set->apod_output, frame_curr, input, set->blocksize_min/(ind+2));
-		}
+		tweak_pass_mt(frame, set, &teff, &tsaved, input);
 		effort_tweak=teff;
 		effort_tweak/=tot_samples;
 	}
