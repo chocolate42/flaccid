@@ -574,7 +574,6 @@ void metadata_callback(const FLAC__StreamDecoder *dec, const FLAC__StreamMetadat
 		fl->set->bps = metadata->data.stream_info.bits_per_sample;
 		fl->input=malloc(fl->tot_samples*fl->set->channels*(fl->set->bps==16?2:4));
 		fl->set->encode_func=(fl->set->bps==16)?FLAC__static_encoder_process_frame_bps16_interleaved:FLAC__static_encoder_process_frame_interleaved;
-		printf("sample_rate %d channels %d bps %d\n", fl->set->sample_rate, fl->set->channels, fl->set->bps);
 	}
 }
 
@@ -1223,8 +1222,8 @@ int chunk_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 		effort_anal=0;
 	}
 
-	printf("settings\tmode(chunk);analysis_comp(%s);analysis_apod(%s);output_comp(%s);output_apod(%s);tweak(%u);merge(%u);"
-		"blocksize_limit_lower(%u);blocksize_limit_upper(%u);analysis_blocksizes(%u", set->comp_anal, set->apod_anal, set->comp_output, set->apod_output, set->tweak, set->merge, set->blocksize_limit_lower, set->blocksize_limit_upper, set->blocks[0]);
+	printf("settings\tmode(chunk);lax(%u);analysis_comp(%s);analysis_apod(%s);output_comp(%s);output_apod(%s);tweak_after(%u);tweak(%u);tweak_early_exit(%u);merge_after(%u);merge(%u);"
+		"blocksize_limit_lower(%u);blocksize_limit_upper(%u);analysis_blocksizes(%u", set->lax, set->comp_anal, set->apod_anal, set->comp_output, set->apod_output, set->tweak_after, set->tweak, set->tweak_early_exit, set->merge_after, set->merge, set->blocksize_limit_lower, set->blocksize_limit_upper, set->blocks[0]);
 	for(i=1;i<set->blocks_count;++i)
 		printf(",%u", set->blocks[i]);
 	cpu_time=((double)(clock()-cstart))/CLOCKS_PER_SEC;
@@ -1334,8 +1333,8 @@ int greed_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 
 	qsort(set->blocks, set->blocks_count, sizeof(int), comp_int_asc);
 
-	printf("settings\tmode(greed);analysis_comp(%s);analysis_apod(%s);output_comp(%s);output_apod(%s);tweak(%u);merge(%u);"
-		"blocksize_limit_lower(%u);blocksize_limit_upper(%u);analysis_blocksizes(%u", set->comp_anal, set->apod_anal, set->comp_output, set->apod_output, set->tweak, set->merge, set->blocksize_limit_lower, set->blocksize_limit_upper, set->blocks[0]);
+	printf("settings\tmode(greed);lax(%u);analysis_comp(%s);analysis_apod(%s);output_comp(%s);output_apod(%s);tweak_after(%u);tweak(%u);tweak_early_exit(%u);merge_after(%u);merge(%u);"
+		"blocksize_limit_lower(%u);blocksize_limit_upper(%u);analysis_blocksizes(%u", set->lax, set->comp_anal, set->apod_anal, set->comp_output, set->apod_output, set->tweak_after, set->tweak, set->tweak_early_exit, set->merge_after, set->merge, set->blocksize_limit_lower, set->blocksize_limit_upper, set->blocks[0]);
 	for(i=1;i<set->blocks_count;++i)
 		printf(",%u", set->blocks[i]);
 	cpu_time=((double)(clock()-cstart))/CLOCKS_PER_SEC;
@@ -1538,8 +1537,8 @@ int peak_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 		effort_anal+=step[i];
 	effort_output+=1;
 
-	printf("settings\tmode(peakset);analysis_comp(%s);analysis_apod(%s);output_comp(%s);output_apod(%s);tweak(%u);merge(%u);"
-		"blocksize_limit_lower(%u);blocksize_limit_upper(%u);analysis_blocksizes(%u", set->comp_anal, set->apod_anal, set->comp_output, set->apod_output, set->tweak, set->merge, set->blocksize_limit_lower, set->blocksize_limit_upper, set->blocks[0]);
+	printf("settings\tmode(peakset);lax(%u);analysis_comp(%s);analysis_apod(%s);output_comp(%s);output_apod(%s);tweak_after(%u);tweak(%u);tweak_early_exit(%u);merge_after(%u);merge(%u);"
+		"blocksize_limit_lower(%u);blocksize_limit_upper(%u);analysis_blocksizes(%u", set->lax, set->comp_anal, set->apod_anal, set->comp_output, set->apod_output, set->tweak_after, set->tweak, set->tweak_early_exit, set->merge_after, set->merge, set->blocksize_limit_lower, set->blocksize_limit_upper, set->blocks[0]);
 	for(i=1;i<set->blocks_count;++i)
 		printf(",%u", set->blocks[i]);
 	cpu_time=((double)(clock()-cstart))/CLOCKS_PER_SEC;

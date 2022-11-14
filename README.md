@@ -1,8 +1,8 @@
 ## Flaccid
 
-A proof-of-concept multi-threaded flac encoder frontend
+A proof-of-concept multi-threaded variable-blocksize flac encoder frontend using a custom libFLAC as a backend ( https://github.com/chocolate42/flac )
 
-This is just a toy to test the static encoder additions made to the libFLAC API here ( https://github.com/chocolate42/flac ). It only accepts raw CDDA, doesn't do seektables or anything non-essential, used a fixed blocksize of 4096, has a horrible UI, uses POSIX mmap for input so probably doesn't compile on windows, has barely been tested, etc.
+Currently just a toy for benchmarking, there are many missing features that would be necessary for a user-ready version. Input limited to raw or flac, doesn't do seektables or anything non-essential, reads input fully to RAM before encoding, probably doesn't compile on windows, IO and MD5 hashing may be non-optimal or not implemented for some input, etc.
 
 ## Build
 
@@ -25,7 +25,22 @@ The changes boil down to:
 * To reduce needlessly copying data there's a variant with int16_t[] input. There's still a copy from input to internal buffer but it eliminates the intermediate external int32_t[] buffer
 * The frame encoders do not do MD5 hashing, as hashing is an in-order operation and we cannot guarantee that (in fact the main point of the API is to allow things to be done out-of-order)
 
-## flaccid jank
+## flaccid options
 
-* Worker count is the maximum number of encode threads to use simultaneouusly, but depending on the mode it's not necessarily the total number of simultaneous threads. I/O and MD5 may have their own threads and how they act may not be optimal, it's implemented however was convenient
-* Raw CDDA input only just because it was convenient
+There's some options exposed to modify how variable blocksizes are chosen, they all boil down to brute force testing which blocks are more efficient in some way. Some options are better than others, it's a WIP to find which levers to pull to quickly increase efficiency:
+
+* peakset mode is optimal for a given blocksize list and encode settings when the analysis settings are the same as the encode settings
+* chunk mode takes much less effort for worse efficiency, but is still reasonable for quick encodes
+* greed mode greedily picks the best option for the next frame from a list of block sizes. It has relatively weak efficiency because it doesn't take into account local frames, and thread occupancy is lower than peakset and chunk as every test for the next frame has to complete before moving on to the next frame
+
+To speed things up and improve space-efficiency there's some additional options:
+
+* 1 worker by default, all other things equal a near-linear speedup can be gained by changing the number of workers to the number of cores on the system
+* --lax allows the encoder to use large blocksizes and other non-subset settings
+* Analysis can use different compression settings to the final encode. -5 reasonably approximates the behaviour of -8, and as analysis takes the majority of effort this can save a lot of time for a small loss in efficiency
+* Merge passes combine adjacent frames and store them as one frame if the result is smaller
+* Tweak passes adjust where adjacent frames are split, storing frames with a new split if the result is smaller
+* Merge and tweak are defined with pass thresholds, multiple passes are done until a pass doesn't meet the threshold
+* Merge and tweak use analysis settings by default, but they can use encode settings if desired (probably shouldn't be used, at least not until very slow settings are used)
+* Tweak and merge behaviour can be fine-tuned by limiting min and max blocksize. It mostly doesn't do much but some input may benefit
+* Every tweak test tries above and below the current best, it can be told to early exit if the first test saves bytes. This probably shouldn't be set, it can save time but also loses quite a lot of efficiency for general input as often both going above and below saves bytes, it's pot-luck if the first test is the best of the two
