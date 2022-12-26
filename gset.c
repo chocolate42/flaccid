@@ -1,11 +1,11 @@
-#include "greed.h"
+#include "gset.h"
 
 #include <assert.h>
 #include <omp.h>
 #include <stdlib.h>
 #include <time.h>
 
-int greed_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
+int gset_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	size_t i;
 	uint64_t curr_sample, tot_samples=input_size/(set->channels*(set->bps==16?2:4));
 	greed_controller greed;

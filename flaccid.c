@@ -2,7 +2,7 @@
 
 #include "chunk.h"
 #include "common.h"
-#include "greed.h"
+#include "gset.h"
 #include "load.h"
 #include "merge.h"
 #include "peakset.h"
@@ -25,7 +25,7 @@ char *help=
 	" --lax : Allow non-subset settings\n"
 	" --merge threshold : If set enables merge mode, doing passes until a pass saves less than threshold bytes\n"
 	" --merge-after : Merge using output settings instead of analysis settings\n"
-	" --mode mode : Which variable-blocksize algorithm to use. Valid modes: chunk, greed, peakset\n"
+	" --mode mode : Which variable-blocksize algorithm to use. Valid modes: chunk, gset, peakset\n"
 	" --out outfile : Destination\n"
 	" --output-apod apod_string : Apodization settings to use during output\n"
 	" --output-comp comp_string: Compression settings to use during output\n"
@@ -46,7 +46,7 @@ char *help=
 	" * ie tukey(0.5);partial_tukey(2);punchout_tukey(3)\n";
 
 int main(int argc, char *argv[]){
-	int (*encoder[3])(void*, size_t, FILE*, flac_settings*)={chunk_main, greed_main, peak_main};
+	int (*encoder[3])(void*, size_t, FILE*, flac_settings*)={chunk_main, gset_main, peak_main};
 	char *ipath=NULL, *opath=NULL;
 	FILE *fout;
 	void *input;
@@ -128,7 +128,7 @@ int main(int argc, char *argv[]){
 			case 'm':
 				if(strcmp(optarg, "chunk")==0)
 					set.mode=0;
-				else if(strcmp(optarg, "greed")==0)
+				else if(strcmp(optarg, "gset")==0)
 					set.mode=1;
 				else if(strcmp(optarg, "peakset")==0)
 					set.mode=2;

@@ -1,6 +1,6 @@
-/*Greed mode implementation. Tries a fixed set of candidates to be the next block, greedily picking the most efficient*/
-#ifndef GREED
-#define GREED
+/*Gset mode implementation. Tries a fixed set of candidates to be the next block, greedily picking the most efficient*/
+#ifndef GSET
+#define GSET
 
 #include "common.h"
 
@@ -16,6 +16,6 @@ typedef struct{
 	size_t genc_count;
 } greed_controller;
 
-int greed_main(void *input, size_t input_size, FILE *fout, flac_settings *set);
+int gset_main(void *input, size_t input_size, FILE *fout, flac_settings *set);
 
 #endif
