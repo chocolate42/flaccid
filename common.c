@@ -158,3 +158,22 @@ void parse_blocksize_list(char *list, int **res, size_t *res_cnt){
 		*res_cnt=*res_cnt+1;
 	}while((cptr=strchr(cptr+1, ',')));
 }
+
+void print_settings(flac_settings *set){
+	char *modes[]={"chunk", "greed", "peakset"};
+	int i;
+	printf("settings\tmode(%s);lax(%u);analysis_comp(%s);analysis_apod(%s);output_comp(%s);output_apod(%s);tweak_after(%u);tweak(%u);tweak_early_exit(%u);merge_after(%u);merge(%u);"
+		"blocksize_limit_lower(%u);blocksize_limit_upper(%u)", modes[set->mode], set->lax, set->comp_anal, set->apod_anal, set->comp_output, set->apod_output, set->tweak_after, set->tweak, set->tweak_early_exit, set->merge_after, set->merge, set->blocksize_limit_lower, set->blocksize_limit_upper);
+	if(set->blocks_count){
+		printf(";analysis_blocksizes(%u", set->blocks[0]);
+		for(i=1;i<set->blocks_count;++i)
+			printf(",%u", set->blocks[i]);
+		printf(")");
+	}
+}
+
+void print_stats(stats *stat){
+	printf("\teffort\tanalysis(%.3f);tweak(%.3f);merge(%.3f);output(%.3f)", stat->effort_anal, stat->effort_tweak, stat->effort_merge, stat->effort_output);
+	printf("\tsubtiming\tanalysis(%.5f);tweak(%.5f);merge(%.5f)", stat->time_anal, stat->time_tweak, stat->time_merge);
+	printf("\tsize\t%zu\tcpu_time\t%.5f\n", stat->outsize+42, stat->cpu_time);
+}

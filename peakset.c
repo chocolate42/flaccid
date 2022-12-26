@@ -13,15 +13,13 @@ int peak_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	size_t *frame_results, *running_results;
 	uint8_t *running_step;
 	size_t window_size, window_size_check=0;
-	size_t outsize=42;
 	size_t tot_samples=input_size/(set->channels*(set->bps==16?2:4));
-	size_t effort_print=0;
+	size_t print_effort=0;
 	flist *frame=NULL, *frame_curr;
 	peak_hunter *work;
 	FLAC__StaticEncoder *encout;
-	double effort_anal, effort_output=0, effort_tweak=0, effort_merge=0;
 	clock_t cstart, cstart_sub;
-	double cpu_time, anal_time=0, tweak_time=0, merge_time=0;
+	stats stat={0};
 	cstart=clock();
 
 	if(set->blocks_count==1)
@@ -79,8 +77,8 @@ int peak_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 			frame_results[(i*step_count)+j]=SIZE_MAX;
 		for(k=0;k<set->work_count;++k)
 			FLAC__static_encoder_delete(work[k].enc);
-		effort_print+=step[j];
-		fprintf(stderr, "Processed %zu/%zu\n", effort_print, effort);
+		print_effort+=step[j];
+		fprintf(stderr, "Processed %zu/%zu\n", print_effort, effort);
 	}
 
 	/* analyse stats */
@@ -100,7 +98,7 @@ int peak_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 		running_results[i]=curr_run;
 		running_step[i]=curr_step;
 	}
-	anal_time=((double)(clock()-cstart_sub))/CLOCKS_PER_SEC;
+	stat.time_anal=((double)(clock()-cstart_sub))/CLOCKS_PER_SEC;
 
 	/* traverse optimal result */
 	for(i=window_size;i>0;){
@@ -127,18 +125,18 @@ int peak_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 		size_t teff=0, tsaved=0;
 		cstart_sub=clock();
 		merge_pass_mt(frame, set, set->comp_anal, set->apod_anal, &teff, &tsaved, input);
-		effort_merge=teff;
-		effort_merge/=tot_samples;
-		merge_time=((double)(clock()-cstart_sub))/CLOCKS_PER_SEC;
+		stat.effort_merge=teff;
+		stat.effort_merge/=tot_samples;
+		stat.time_merge=((double)(clock()-cstart_sub))/CLOCKS_PER_SEC;
 	}
 
 	if(!set->tweak_after && set->tweak){
 		size_t teff=0, tsaved=0;
 		cstart_sub=clock();
 		tweak_pass_mt(frame, set, set->comp_anal, set->apod_anal, &teff, &tsaved, input);
-		effort_tweak=teff;
-		effort_tweak/=tot_samples;
-		tweak_time=((double)(clock()-cstart_sub))/CLOCKS_PER_SEC;
+		stat.effort_tweak=teff;
+		stat.effort_tweak/=tot_samples;
+		stat.time_tweak=((double)(clock()-cstart_sub))/CLOCKS_PER_SEC;
 	}
 
 	//if used simpler settings for analysis, encode properly here to get comp_output sizes
@@ -149,24 +147,24 @@ int peak_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 		size_t teff=0, tsaved=0;
 		cstart_sub=clock();
 		merge_pass_mt(frame, set, set->comp_output, set->apod_output, &teff, &tsaved, input);
-		effort_merge=teff;
-		effort_merge/=tot_samples;
-		merge_time=((double)(clock()-cstart_sub))/CLOCKS_PER_SEC;
+		stat.effort_merge=teff;
+		stat.effort_merge/=tot_samples;
+		stat.time_merge=((double)(clock()-cstart_sub))/CLOCKS_PER_SEC;
 	}
 
 	if(set->tweak_after && set->tweak){
 		size_t teff=0, tsaved=0;
 		cstart_sub=clock();
 		tweak_pass_mt(frame, set, set->comp_output, set->apod_output, &teff, &tsaved, input);
-		effort_tweak=teff;
-		effort_tweak/=tot_samples;
-		tweak_time=((double)(clock()-cstart_sub))/CLOCKS_PER_SEC;
+		stat.effort_tweak=teff;
+		stat.effort_tweak/=tot_samples;
+		stat.time_tweak=((double)(clock()-cstart_sub))/CLOCKS_PER_SEC;
 	}
 
 	/* Write optimal result */
-	flist_write(frame, set, input, &outsize, fout);
+	flist_write(frame, set, input, &(stat.outsize), fout);
 	if(!set->diff_comp_settings && !set->tweak && !set->merge)
-		assert(outsize==(running_results[window_size]+42));
+		assert(stat.outsize==running_results[window_size]);
 
 	if(tot_samples-(window_size*set->blocks[0])){/* partial end frame */
 		void *partial_outbuf;
@@ -179,25 +177,20 @@ int peak_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 			&(partial_outbuf),
 			&(partial_outbuf_size)
 		);
-		outsize+=fwrite_framestat(partial_outbuf, partial_outbuf_size, fout, &(set->minf), &(set->maxf));
+		stat.outsize+=fwrite_framestat(partial_outbuf, partial_outbuf_size, fout, &(set->minf), &(set->maxf));
 		FLAC__static_encoder_delete(encout);
 	}
 	if(set->bps==16)//non-16 bit TODO
 		MD5(((void*)input), input_size, set->hash);
 
-	effort_anal=0;
+	stat.effort_anal=0;
 	for(i=0;i<set->blocks_count;++i)//analysis effort approaches the sum of the normalised blocksizes as window_size approaches infinity
-		effort_anal+=step[i];
-	effort_output+=1;
+		stat.effort_anal+=step[i];
+	stat.effort_output+=1;
 
-	printf("settings\tmode(peakset);lax(%u);analysis_comp(%s);analysis_apod(%s);output_comp(%s);output_apod(%s);tweak_after(%u);tweak(%u);tweak_early_exit(%u);merge_after(%u);merge(%u);"
-		"blocksize_limit_lower(%u);blocksize_limit_upper(%u);analysis_blocksizes(%u", set->lax, set->comp_anal, set->apod_anal, set->comp_output, set->apod_output, set->tweak_after, set->tweak, set->tweak_early_exit, set->merge_after, set->merge, set->blocksize_limit_lower, set->blocksize_limit_upper, set->blocks[0]);
-	for(i=1;i<set->blocks_count;++i)
-		printf(",%u", set->blocks[i]);
-	cpu_time=((double)(clock()-cstart))/CLOCKS_PER_SEC;
-	printf(")\teffort\tanalysis(%.3f);tweak(%.3f);merge(%.3f);output(%.3f)", effort_anal, effort_tweak, effort_merge, effort_output);
-	printf("\tsubtiming\tanalysis(%.5f);tweak(%.5f);merge(%.5f)", anal_time, tweak_time, merge_time);
-	printf("\tsize\t%zu\tcpu_time\t%.5f\n", outsize, cpu_time);
+	stat.cpu_time=((double)(clock()-cstart))/CLOCKS_PER_SEC;
+	print_settings(set);
+	print_stats(&stat);
 
 	return 0;
 }

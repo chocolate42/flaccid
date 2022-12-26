@@ -11,10 +11,9 @@ int greed_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	greed_controller greed;
 	MD5_CTX ctx;
 	FLAC__StaticEncoder *oenc;
-	double effort_anal, effort_output, effort_tweak=0, effort_merge=0;
-	size_t effort_anal_run=0, outsize=42;
+	size_t anal_runs=0;
 	clock_t cstart;
-	double cpu_time, anal_time=-1, tweak_time=-1, merge_time=-1;
+	stats stat={0};
 	cstart=clock();
 
 	MD5_Init(&ctx);
@@ -48,7 +47,7 @@ int greed_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 			oenc=init_static_encoder(set, (tot_samples-curr_sample)<16?16:(tot_samples-curr_sample), set->comp_output, set->apod_output);
 			set->encode_func(oenc, input+(curr_sample*set->channels*(set->bps==16?2:4)), tot_samples-curr_sample, curr_sample, &(greed.genc[0].outbuf), &(greed.genc[0].outbuf_size));
 			MD5_Update(&ctx, ((void*)input)+curr_sample*set->channels*(set->bps/8), (tot_samples-curr_sample)*set->channels*(set->bps/8));
-			outsize+=fwrite_framestat(greed.genc[0].outbuf, greed.genc[0].outbuf_size, fout, &(set->minf), &(set->maxf));
+			stat.outsize+=fwrite_framestat(greed.genc[0].outbuf, greed.genc[0].outbuf_size, fout, &(set->minf), &(set->maxf));
 			FLAC__static_encoder_delete(oenc);
 			curr_sample=tot_samples;
 		}
@@ -66,38 +65,36 @@ int greed_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 			if(set->diff_comp_settings){
 				oenc=init_static_encoder(set, set->blocks[smallest_index], set->comp_output, set->apod_output);
 				set->encode_func(oenc, input+(curr_sample*set->channels*(set->bps==16?2:4)), set->blocks[smallest_index], curr_sample, &(greed.genc[smallest_index].outbuf), &(greed.genc[smallest_index].outbuf_size));
-				outsize+=fwrite_framestat(greed.genc[smallest_index].outbuf, greed.genc[smallest_index].outbuf_size, fout, &(set->minf), &(set->maxf));
+				stat.outsize+=fwrite_framestat(greed.genc[smallest_index].outbuf, greed.genc[smallest_index].outbuf_size, fout, &(set->minf), &(set->maxf));
 				FLAC__static_encoder_delete(oenc);
 			}
 			else
-				outsize+=fwrite_framestat(greed.genc[smallest_index].outbuf, greed.genc[smallest_index].outbuf_size, fout, &(set->minf), &(set->maxf));
+				stat.outsize+=fwrite_framestat(greed.genc[smallest_index].outbuf, greed.genc[smallest_index].outbuf_size, fout, &(set->minf), &(set->maxf));
 			curr_sample+=set->blocks[smallest_index];
 		}
-		++effort_anal_run;
+		++anal_runs;
 	}
 	if(set->bps==16)//non-16 bit TODO
 		MD5_Final(set->hash, &ctx);
 
-	effort_anal=0;
+	stat.effort_anal=0;
 	for(i=0;i<set->blocks_count;++i)
-		effort_anal+=set->blocks[i];
-	effort_anal*=effort_anal_run;
-	effort_anal/=tot_samples;
+		stat.effort_anal+=set->blocks[i];
+	stat.effort_anal*=anal_runs;
+	stat.effort_anal/=tot_samples;
 
-	effort_output=1;
+	stat.effort_output=1;
 	if(!set->diff_comp_settings)
-		effort_anal=0;
+		stat.effort_anal=0;
+
+	
 
 	qsort(set->blocks, set->blocks_count, sizeof(int), comp_int_asc);
 
-	printf("settings\tmode(greed);lax(%u);analysis_comp(%s);analysis_apod(%s);output_comp(%s);output_apod(%s);tweak_after(%u);tweak(%u);tweak_early_exit(%u);merge_after(%u);merge(%u);"
-		"blocksize_limit_lower(%u);blocksize_limit_upper(%u);analysis_blocksizes(%u", set->lax, set->comp_anal, set->apod_anal, set->comp_output, set->apod_output, set->tweak_after, set->tweak, set->tweak_early_exit, set->merge_after, set->merge, set->blocksize_limit_lower, set->blocksize_limit_upper, set->blocks[0]);
-	for(i=1;i<set->blocks_count;++i)
-		printf(",%u", set->blocks[i]);
-	cpu_time=((double)(clock()-cstart))/CLOCKS_PER_SEC;
-	printf(")\teffort\tanalysis(%.3f);tweak(%.3f);merge(%.3f);output(%.3f)", effort_anal, effort_tweak, effort_merge, effort_output);
-	printf("\tsubtiming\tanalysis(%.5f);tweak(%.5f);merge(%.5f)", anal_time, tweak_time, merge_time);
-	printf("\tsize\t%zu\tcpu_time\t%.5f\n", outsize, cpu_time);
+	stat.cpu_time=((double)(clock()-cstart))/CLOCKS_PER_SEC;
+	stat.time_anal=stat.cpu_time;
+	print_settings(set);
+	print_stats(&stat);
 
 	return 0;
 }

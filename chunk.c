@@ -147,10 +147,9 @@ int chunk_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	//output thread variables
 	int output_skipped=0;
 	uint32_t curr_chunk_out=0;
-	double effort_anal, effort_output, effort_tweak=0, effort_merge=0;
-	size_t outsize=42, tot_samples=input_size/(set->channels*(set->bps==16?2:4));
+	size_t tot_samples=input_size/(set->channels*(set->bps==16?2:4));
 	clock_t cstart, cstart_sub;
-	double cpu_time, anal_time=0, tweak_time=0, merge_time=0;
+	stats stat={0};
 	cstart=clock();
 
 	if(set->blocks_count>1){
@@ -254,9 +253,9 @@ int chunk_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 					}
 					if(h>-1){//do write
 						if(curr_chunk_out==last_chunk)//clean TODO, chunk_write only used as legacy code
-							chunk_write(set, &(work[j].chunk[h]), input, fout, &(set->minf), &(set->maxf), &outsize);
+							chunk_write(set, &(work[j].chunk[h]), input, fout, &(set->minf), &(set->maxf), &(stat.outsize));
 						else{
-							flist_write(work[j].chunk[h].list, set, input, &outsize, fout);
+							flist_write(work[j].chunk[h].list, set, input, &(stat.outsize), fout);
 							//flist_delete(
 							work[j].chunk[h].list=NULL;
 						}
@@ -309,24 +308,24 @@ int chunk_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 						chunk_process(&(work[omp_get_thread_num()].chunk[h]), input+work[omp_get_thread_num()].curr_chunk[h]*input_chunk_size, set->blocksize_max*work[omp_get_thread_num()].curr_chunk[h], set);
 						chunk_analyse(&(work[omp_get_thread_num()].chunk[h]));
 						chunk_list(work[omp_get_thread_num()].chunk+h, NULL, &(work[omp_get_thread_num()].chunk[h].list));
-						anal_time+=((double)(clock()-cstart_sub))/CLOCKS_PER_SEC;
+						stat.time_anal+=((double)(clock()-cstart_sub))/CLOCKS_PER_SEC;
 
 						if(!set->tweak_after && set->tweak){//tweak with analysis settings
 							size_t teff=0, tsaved=0;
 							cstart_sub=clock();
 							tweak_pass(work[omp_get_thread_num()].chunk[h].list, set, set->comp_anal, set->apod_anal, &teff, &tsaved, input);
-							effort_tweak=teff;
-							effort_tweak/=tot_samples;
-							tweak_time+=((double)(clock()-cstart_sub))/CLOCKS_PER_SEC;
+							stat.effort_tweak=teff;
+							stat.effort_tweak/=tot_samples;
+							stat.time_tweak+=((double)(clock()-cstart_sub))/CLOCKS_PER_SEC;
 						}
 						flist_initial_output_encode(work[omp_get_thread_num()].chunk[h].list, set, input);
 						if(set->tweak_after && set->tweak){//tweak with output settings
 							size_t teff=0, tsaved=0;
 							cstart_sub=clock();
 							tweak_pass(work[omp_get_thread_num()].chunk[h].list, set, set->comp_output, set->apod_output, &teff, &tsaved, input);
-							effort_tweak=teff;
-							effort_tweak/=tot_samples;
-							tweak_time+=((double)(clock()-cstart_sub))/CLOCKS_PER_SEC;
+							stat.effort_tweak=teff;
+							stat.effort_tweak/=tot_samples;
+							stat.time_tweak+=((double)(clock()-cstart_sub))/CLOCKS_PER_SEC;
 						}
 						/*merge does nothing as we're trying to merge within a chunk, which implicitly merges already */
 					}
@@ -341,21 +340,16 @@ int chunk_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	}
 	#pragma omp barrier
 
-	effort_anal=set->blocks_count;
-	effort_output=1;
+	stat.effort_anal=set->blocks_count;
+	stat.effort_output=1;
 	if(!set->diff_comp_settings){
-		effort_output=effort_anal;
-		effort_anal=0;
+		stat.effort_output=stat.effort_anal;
+		stat.effort_anal=0;
 	}
 
-	printf("settings\tmode(chunk);lax(%u);analysis_comp(%s);analysis_apod(%s);output_comp(%s);output_apod(%s);tweak_after(%u);tweak(%u);tweak_early_exit(%u);merge_after(%u);merge(%u);"
-		"blocksize_limit_lower(%u);blocksize_limit_upper(%u);analysis_blocksizes(%u", set->lax, set->comp_anal, set->apod_anal, set->comp_output, set->apod_output, set->tweak_after, set->tweak, set->tweak_early_exit, set->merge_after, set->merge, set->blocksize_limit_lower, set->blocksize_limit_upper, set->blocks[0]);
-	for(i=1;i<set->blocks_count;++i)
-		printf(",%u", set->blocks[i]);
-	cpu_time=((double)(clock()-cstart))/CLOCKS_PER_SEC;
-	printf(")\teffort\tanalysis(%.3f);tweak(%.3f);merge(%.3f);output(%.3f)", effort_anal, effort_tweak, effort_merge, effort_output);
-	printf("\tsubtiming\tanalysis(%.5f);tweak(%.5f);merge(%.5f)", anal_time, tweak_time, merge_time);
-	printf("\tsize\t%zu\tcpu_time\t%.5f\n", outsize, cpu_time);
+	stat.cpu_time=((double)(clock()-cstart))/CLOCKS_PER_SEC;
+	print_settings(set);
+	print_stats(&stat);
 
 	return 0;
 }

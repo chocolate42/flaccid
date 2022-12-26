@@ -1,3 +1,4 @@
+/*Input loading*/
 #ifndef LOAD
 #define LOAD
 

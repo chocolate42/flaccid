@@ -70,7 +70,7 @@ int main(int argc, char *argv[]){
 	static int tweak_early_exit=0;
 	char *blocklist_str="1152,2304,4608";
 
-	int c, mode=-1, option_index;
+	int c, option_index;
 	static struct option long_options[]={
 		{"analysis-apod", required_argument, 0, 259},
 		{"analysis-comp", required_argument, 0, 256},
@@ -98,7 +98,7 @@ int main(int argc, char *argv[]){
 	set.apod_anal=NULL;
 	set.apod_output=NULL;
 	set.blocksize_limit_lower=256;
-	set.blocksize_limit_upper=-1;
+	set.blocksize_limit_upper=65535;
 	set.blocksize_max=4096;
 	set.blocksize_min=4096;
 	set.bps=16;
@@ -109,6 +109,7 @@ int main(int argc, char *argv[]){
 	set.merge=4096;
 	set.minf=UINT32_MAX;
 	set.maxf=0;
+	set.mode=-1;
 	set.sample_rate=44100;
 	set.work_count=1;
 
@@ -126,11 +127,11 @@ int main(int argc, char *argv[]){
 
 			case 'm':
 				if(strcmp(optarg, "chunk")==0)
-					mode=0;
+					set.mode=0;
 				else if(strcmp(optarg, "greed")==0)
-					mode=1;
+					set.mode=1;
 				else if(strcmp(optarg, "peakset")==0)
-					mode=2;
+					set.mode=2;
 				else
 					goodbye("Unknown mode\n");
 				break;
@@ -202,9 +203,7 @@ int main(int argc, char *argv[]){
 	set.tweak_after=tweak_after;
 	set.tweak_early_exit=tweak_early_exit;
 	set.lax=lax;
-	if(set.lax && set.blocksize_limit_upper==-1)
-		set.blocksize_limit_upper=65535;
-	else if(!set.lax && set.blocksize_limit_upper==-1)
+	if(!set.lax && set.blocksize_limit_upper>4608)
 		set.blocksize_limit_upper=4608;//<=48KHz assumed fix TODO
 
 	set.diff_comp_settings=strcmp(set.comp_anal, set.comp_output)!=0;
@@ -218,7 +217,7 @@ int main(int argc, char *argv[]){
 	if(!opath)/* Add test option with no output TODO */
 		goodbye("Error: No output\n");
 
-	if(mode==-1)
+	if(set.mode==-1)
 		goodbye("Error: No mode\n");
 
 	parse_blocksize_list(blocklist_str, &(set.blocks), &(set.blocks_count));
@@ -235,7 +234,7 @@ int main(int argc, char *argv[]){
 	tot_samples=input_size/(set.channels*(set.bps==16?2:4));
 
 	printf("%s\t", ipath);
-	encoder[mode](input, input_size, fout, &set);
+	encoder[set.mode](input, input_size, fout, &set);
 
 	/* write finished header */
 	header[ 8]=(set.blocksize_min>>8)&255;
