@@ -2,17 +2,17 @@
 
 A proof-of-concept multi-threaded variable-blocksize flac encoder frontend using a custom libFLAC as a backend ( https://github.com/chocolate42/flac )
 
-Currently just a toy for benchmarking, there are many missing features that would be necessary for a user-ready version. Input limited to raw or flac, doesn't do seektables or anything non-essential, reads input fully to RAM before encoding, probably doesn't compile on windows, IO and MD5 hashing may be non-optimal or not implemented for some input, etc.
+Currently just a toy for benchmarking, there are many missing features that would be necessary for a user-ready version. Input is limited to raw or flac, doesn't do seektables or anything non-essential, reads input fully to RAM before encoding, probably doesn't compile on windows, IO and MD5 hashing may be non-optimal or not implemented for some input, etc.
 
 ## Build
 
-First build libFLAC from this repo, it adds a few functions to tap into libFLAC's encoder in a non-streaming way (allowing for among other things SMT): https://github.com/chocolate42/flac
+First build libFLAC from this repo, it adds a few functions to tap into libFLAC's encoder in a non-streaming way: https://github.com/chocolate42/flac
 
 Then to build flaccid on Linux do something like this:
 
-gcc -oflaccid flaccid.c -I<PATH_TO_LIBFLAC_INCLUDE> <PATH_TO_libFLAC-static.a> -lcrypto -lm -logg -fopenmp -Wall -O3 -funroll-loops  -Wall -Wextra -Wstrict-prototypes -Wmissing-prototypes -Waggregate-return -Wcast-align -Wnested-externs -Wshadow -Wundef -Wmissing-declarations -Winline  -Wdeclaration-after-statement -fvisibility=hidden -fstack-protector-strong
+gcc -oflaccid chunk.c common.c flaccid.c gset.c load.c merge.c peakset.c tweak.c -I<PATH_TO_LIBFLAC_INCLUDE> <PATH_TO_libFLAC-static.a> -lcrypto -lm -logg -fopenmp -Wall -O3 -funroll-loops  -Wall -Wextra -Wstrict-prototypes -Wmissing-prototypes -Waggregate-return -Wcast-align -Wnested-externs -Wshadow -Wundef -Wmissing-declarations -Winline  -Wdeclaration-after-statement -fvisibility=hidden -fstack-protector-strong
 
-This is just a copy of the flags used to compile libFLAC, plus OpenMP for SMT and OpenSSL for MD5.
+This is just a copy of the default flags used to compile libFLAC, plus OpenMP for coarse multithreading and OpenSSL for MD5.
 
 ## Static API
 
@@ -21,9 +21,9 @@ The changes boil down to:
 * Leaving the existing API untouched
 * Adding a new type FLAC__StaticEncoder which simply wraps FLAC__StreamEncoder, allowing stream functions to be used internally but separating the interface externally
 * A few necessary functions to create and destroy the new type
-* The user encodes per-frame, by feeding an entire frame of input along with the frame index and static encoder instance to a function. Instead of callbacks the function returns a buffer containing the encoded frame
+* The user encodes per-frame, by feeding an entire frame of input along with the frame/sample index and providing a valid static encoder instance. Instead of callbacks the function returns a buffer containing the encoded frame, valid until the static encoder instance is re-used
 * To reduce needlessly copying data there's a variant with int16_t[] input. There's still a copy from input to internal buffer but it eliminates the intermediate external int32_t[] buffer
-* The frame encoders do not do MD5 hashing, as hashing is an in-order operation and we cannot guarantee that (in fact the main point of the API is to allow things to be done out-of-order)
+* The frame encoders do not do MD5 hashing, hashing is an in-order operation and we cannot guarantee that (in fact the major use case of the API is to allow things to be done out-of-order)
 
 ## flaccid options
 
@@ -31,7 +31,7 @@ There's some options exposed to modify how variable blocksizes are chosen, they 
 
 * peakset mode is optimal for a given blocksize list and encode settings when the analysis settings are the same as the encode settings
 * chunk mode takes much less effort for worse efficiency, but is still reasonable for quick encodes
-* greed mode greedily picks the best option for the next frame from a list of block sizes. It has relatively weak efficiency because it doesn't take into account local frames, and thread occupancy is lower than peakset and chunk as every test for the next frame has to complete before moving on to the next frame
+* gset mode greedily picks the best option for the next frame from a fixed set of block sizes. It has relatively weak efficiency because it doesn't take into account local frames, and thread occupancy is lower than peakset and chunk as every test for the next frame has to complete before moving on to the next frame
 
 To speed things up and improve space-efficiency there's some additional options:
 
