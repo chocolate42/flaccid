@@ -160,7 +160,7 @@ void parse_blocksize_list(char *list, int **res, size_t *res_cnt){
 }
 
 void print_settings(flac_settings *set){
-	char *modes[]={"chunk", "greed", "peakset"};
+	char *modes[]={"chunk", "gset", "peakset", "gasc"};
 	int i;
 	printf("settings\tmode(%s);lax(%u);analysis_comp(%s);analysis_apod(%s);output_comp(%s);output_apod(%s);tweak_after(%u);tweak(%u);tweak_early_exit(%u);merge_after(%u);merge(%u);"
 		"blocksize_limit_lower(%u);blocksize_limit_upper(%u)", modes[set->mode], set->lax, set->comp_anal, set->apod_anal, set->comp_output, set->apod_output, set->tweak_after, set->tweak, set->tweak_early_exit, set->merge_after, set->merge, set->blocksize_limit_lower, set->blocksize_limit_upper);
@@ -176,4 +176,47 @@ void print_stats(stats *stat){
 	printf("\teffort\tanalysis(%.3f);tweak(%.3f);merge(%.3f);output(%.3f)", stat->effort_anal, stat->effort_tweak, stat->effort_merge, stat->effort_output);
 	printf("\tsubtiming\tanalysis(%.5f);tweak(%.5f);merge(%.5f)", stat->time_anal, stat->time_tweak, stat->time_merge);
 	printf("\tsize\t%zu\tcpu_time\t%.5f\n", stat->outsize+42, stat->cpu_time);
+}
+
+void simple_enc_encode(simple_enc *senc, flac_settings *set, void *input, uint32_t samples, uint64_t curr_sample, int is_anal, stats *stat){
+	assert(senc&&set&&input&&samples);
+	if(senc->sample_cnt && samples!=senc->sample_cnt)//different frame size, delete old
+		FLAC__static_encoder_delete(senc->enc);
+	if(samples!=senc->sample_cnt){//different frame size, create new
+		senc->enc=init_static_encoder(set, samples<16?16:samples, is_anal?set->comp_anal:set->comp_output, is_anal?set->apod_anal:set->apod_output);
+		senc->sample_cnt=samples;
+	}
+	set->encode_func(senc->enc, input+curr_sample*set->channels*(set->bps==16?2:4), samples, curr_sample, &(senc->outbuf), &(senc->outbuf_size));//do encode
+	if(stat){
+		if(is_anal)
+			stat->effort_anal+=samples;
+		else
+			stat->effort_output+=samples;
+	}
+}
+
+void simple_enc_aio(simple_enc *senc, flac_settings *set, void *input, uint32_t samples, uint64_t curr_sample, int is_anal, MD5_CTX *ctx, FILE *fout, stats *stat){
+	simple_enc_encode(senc, set, input, samples, curr_sample, is_anal, stat);
+	if(ctx && set->bps==16)//bps!=16 TODO
+		MD5_Update(ctx, input+set->channels*curr_sample*2, samples*set->channels*2);
+	if(fout&&stat)
+		stat->outsize+=fwrite_framestat(senc->outbuf, senc->outbuf_size, fout, &(set->minf), &(set->maxf));
+}
+
+void simple_enc_out(simple_enc *senc, flac_settings *set, void *input, uint64_t *curr_sample, FILE *fout, stats *stat){
+	if(set->diff_comp_settings)
+		simple_enc_aio(senc, set, input, senc->sample_cnt, *curr_sample, 0, NULL, fout, stat);
+	else
+		stat->outsize+=fwrite_framestat(senc->outbuf, senc->outbuf_size, fout, &(set->minf), &(set->maxf));
+	(*curr_sample)+=senc->sample_cnt;
+}
+
+int simple_enc_eof(simple_enc *senc, flac_settings *set, void *input, uint64_t *curr_sample, uint64_t tot_samples, uint64_t threshold, MD5_CTX *ctx, FILE *fout, stats *stat){
+	if((tot_samples-*curr_sample)<=threshold){//EOF
+		simple_enc_aio(senc, set, input, tot_samples-*curr_sample, *curr_sample, 0, ctx, fout, stat);
+		*curr_sample=tot_samples;
+		return 1;
+	}
+	else
+		return 0;
 }

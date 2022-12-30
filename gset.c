@@ -12,8 +12,8 @@ int gset_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	MD5_CTX ctx;
 	FLAC__StaticEncoder *oenc;
 	size_t anal_runs=0;
-	clock_t cstart;
 	stats stat={0};
+	clock_t cstart;
 	cstart=clock();
 
 	MD5_Init(&ctx);
@@ -86,8 +86,6 @@ int gset_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	stat.effort_output=1;
 	if(!set->diff_comp_settings)
 		stat.effort_anal=0;
-
-	
 
 	qsort(set->blocks, set->blocks_count, sizeof(int), comp_int_asc);
 

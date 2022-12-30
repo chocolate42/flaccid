@@ -2,6 +2,7 @@
 
 #include "chunk.h"
 #include "common.h"
+#include "gasc.h"
 #include "gset.h"
 #include "load.h"
 #include "merge.h"
@@ -19,13 +20,13 @@ char *help=
 	" --analysis-comp comp_string: Compression settings to use during analysis\n"
 	" --blocksize-list list,of,sizes : Blocksizes that a mode is allowed to use for analysis.\n"
 	"                                  Different modes have different constraints on valid combinations\n"
-	" --blocksize-limit-lower limit: Minimum blocksize tweak/merge passes can test\n"
-	" --blocksize-limit-upper limit: Maximum blocksize tweak/merge passes can test\n"
+	" --blocksize-limit-lower limit: Minimum blocksize a frame can be\n"
+	" --blocksize-limit-upper limit: Maximum blocksize a frame can be\n"
 	" --in infile : Source, pipe unsupported\n"
 	" --lax : Allow non-subset settings\n"
 	" --merge threshold : If set enables merge mode, doing passes until a pass saves less than threshold bytes\n"
 	" --merge-after : Merge using output settings instead of analysis settings\n"
-	" --mode mode : Which variable-blocksize algorithm to use. Valid modes: chunk, gset, peakset\n"
+	" --mode mode : Which variable-blocksize algorithm to use. Valid modes: chunk, gasc, gset, peakset\n"
 	" --out outfile : Destination\n"
 	" --output-apod apod_string : Apodization settings to use during output\n"
 	" --output-comp comp_string: Compression settings to use during output\n"
@@ -46,7 +47,7 @@ char *help=
 	" * ie tukey(0.5);partial_tukey(2);punchout_tukey(3)\n";
 
 int main(int argc, char *argv[]){
-	int (*encoder[3])(void*, size_t, FILE*, flac_settings*)={chunk_main, gset_main, peak_main};
+	int (*encoder[4])(void*, size_t, FILE*, flac_settings*)={chunk_main, gset_main, peak_main, gasc_main};
 	char *ipath=NULL, *opath=NULL;
 	FILE *fout;
 	void *input;
@@ -132,6 +133,8 @@ int main(int argc, char *argv[]){
 					set.mode=1;
 				else if(strcmp(optarg, "peakset")==0)
 					set.mode=2;
+				else if(strcmp(optarg, "gasc")==0)
+					set.mode=3;
 				else
 					goodbye("Unknown mode\n");
 				break;

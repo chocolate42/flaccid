@@ -53,4 +53,28 @@ void parse_blocksize_list(char *list, int **res, size_t *res_cnt);
 void print_settings(flac_settings *set);
 void print_stats(stats *stat);
 
+/*wrap a static encoder with its output*/
+typedef struct{
+	FLAC__StaticEncoder *enc;
+	uint8_t *outbuf;
+	size_t outbuf_size, sample_cnt;
+} simple_enc;
+
+/*encode a frame with a simple_encoder instance*/
+void simple_enc_encode(simple_enc *senc, flac_settings *set, void *input, uint32_t samples, uint64_t curr_sample, int is_anal, stats *stat);
+
+/*encode a frame with a simple encoder instance
+Also MD5 input if context present
+Also write to file if IO stream present*/
+void simple_enc_aio(simple_enc *senc, flac_settings *set, void *input, uint32_t samples, uint64_t curr_sample, int is_anal, MD5_CTX *ctx, FILE *fout, stats *stat);
+
+/*If analysis settings == output settings, write precomputed frame to file
+Otherwise, redo frame encode using output settings and write to file
+Advance curr_sample value*/
+void simple_enc_out(simple_enc *senc, flac_settings *set, void *input, uint64_t *curr_sample, FILE *fout, stats *stat);
+
+/*Encode and output the rest of the file as a single frame with output settings if there's not much left of the file
+Advance curr_sample if necessary*/
+int simple_enc_eof(simple_enc *senc, flac_settings *set, void *input, uint64_t *curr_sample, uint64_t tot_samples, uint64_t threshold, MD5_CTX *ctx, FILE *fout, stats *stat);
+
 #endif
