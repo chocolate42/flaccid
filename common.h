@@ -14,10 +14,10 @@ typedef mbedtls_md5_context MD5_CTX;
 #endif
 
 typedef struct{
-	int *blocks, diff_comp_settings, tweak, merge, tweak_after, merge_after, tweak_early_exit, mode;
+	int *blocks, diff_comp_settings, tweak, merge, tweak_early_exit, mode, wildcard, outperc;
 	size_t blocks_count;
 	int work_count, comp_anal_used, do_merge;/*working variables*/
-	char *comp_anal, *comp_output, *apod_anal, *apod_output;
+	char *comp_anal, *comp_output, *comp_outputalt, *apod_anal, *apod_output, *apod_outputalt;
 	int lax, channels, bps, sample_rate;/*flac*/
 	uint32_t minf, maxf;
 	uint8_t hash[16];
@@ -71,7 +71,7 @@ void simple_enc_aio(simple_enc *senc, flac_settings *set, void *input, uint32_t 
 /*If analysis settings == output settings, write precomputed frame to file
 Otherwise, redo frame encode using output settings and write to file
 Advance curr_sample value*/
-void simple_enc_out(simple_enc *senc, flac_settings *set, void *input, uint64_t *curr_sample, FILE *fout, stats *stat);
+void simple_enc_out(simple_enc *senc, flac_settings *set, void *input, uint64_t *curr_sample, FILE *fout, stats *stat, int *outstate);
 
 /*Encode and output the rest of the file as a single frame with output settings if there's not much left of the file
 Advance curr_sample if necessary*/

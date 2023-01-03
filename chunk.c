@@ -310,7 +310,8 @@ int chunk_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 						chunk_list(work[omp_get_thread_num()].chunk+h, NULL, &(work[omp_get_thread_num()].chunk[h].list));
 						stat.time_anal+=((double)(clock()-cstart_sub))/CLOCKS_PER_SEC;
 
-						if(!set->tweak_after && set->tweak){//tweak with analysis settings
+						/*chunk implicitly merges, no merge pass*/
+						if(set->tweak){
 							size_t teff=0, tsaved=0;
 							cstart_sub=clock();
 							tweak_pass(work[omp_get_thread_num()].chunk[h].list, set, set->comp_anal, set->apod_anal, &teff, &tsaved, input);
@@ -319,15 +320,6 @@ int chunk_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 							stat.time_tweak+=((double)(clock()-cstart_sub))/CLOCKS_PER_SEC;
 						}
 						flist_initial_output_encode(work[omp_get_thread_num()].chunk[h].list, set, input);
-						if(set->tweak_after && set->tweak){//tweak with output settings
-							size_t teff=0, tsaved=0;
-							cstart_sub=clock();
-							tweak_pass(work[omp_get_thread_num()].chunk[h].list, set, set->comp_output, set->apod_output, &teff, &tsaved, input);
-							stat.effort_tweak=teff;
-							stat.effort_tweak/=tot_samples;
-							stat.time_tweak+=((double)(clock()-cstart_sub))/CLOCKS_PER_SEC;
-						}
-						/*merge does nothing as we're trying to merge within a chunk, which implicitly merges already */
 					}
 					#pragma omp atomic
 					work[omp_get_thread_num()].status[h]++;

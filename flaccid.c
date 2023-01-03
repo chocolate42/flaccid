@@ -25,16 +25,17 @@ char *help=
 	" --in infile : Source, pipe unsupported\n"
 	" --lax : Allow non-subset settings\n"
 	" --merge threshold : If set enables merge mode, doing passes until a pass saves less than threshold bytes\n"
-	" --merge-after : Merge using output settings instead of analysis settings\n"
 	" --mode mode : Which variable-blocksize algorithm to use. Valid modes: chunk, gasc, gset, peakset\n"
 	" --out outfile : Destination\n"
 	" --output-apod apod_string : Apodization settings to use during output\n"
 	" --output-comp comp_string: Compression settings to use during output\n"
+	" --outperc num: 1-100 integer percentage of how often to use normal output settings (default 100)\n"
+	" --outputalt-apod apod_string : Secondary output settings to use sometimes if --outperc is not 100\n"
+	" --outputalt-comp comp_string: Secondary output settings to use sometimes if --outperc is not 100\n"
 	" --sample-rate num : Set sample rate\n"
 	" --tweak threshold : If set enables tweak mode, doing passes until a pass saves less than threshold bytes\n"
 	" --tweak-early-exit : Tweak tries increasing and decreasing partition in a single pass. Early exit doesn't\n"
 	"                      try the second direction if the first saved space\n"
-	" --tweak-after : Tweak using output settings instead of nalysis settings\n"
 	" --workers integer : The maximum number of encode threads to run simultaneously\n"
 	"\nCompression settings format:\n"
 	" * Mostly follows ./flac interface, but requires settings to be concatenated into a single string\n"
@@ -47,7 +48,7 @@ char *help=
 	" * ie tukey(0.5);partial_tukey(2);punchout_tukey(3)\n";
 
 int main(int argc, char *argv[]){
-	int (*encoder[4])(void*, size_t, FILE*, flac_settings*)={chunk_main, gset_main, peak_main, gasc_main};
+	int (*encoder[5])(void*, size_t, FILE*, flac_settings*)={chunk_main, gset_main, peak_main, gasc_main};
 	char *ipath=NULL, *opath=NULL;
 	FILE *fout;
 	void *input;
@@ -66,8 +67,6 @@ int main(int argc, char *argv[]){
 	uint64_t tot_samples;
 	flac_settings set;
 	static int lax=0;
-	static int merge_after=0;
-	static int tweak_after=0;
 	static int tweak_early_exit=0;
 	char *blocklist_str="1152,2304,4608";
 
@@ -82,22 +81,25 @@ int main(int argc, char *argv[]){
 		{"in", required_argument, 0, 'i'},
 		{"lax", no_argument, &lax, 1},
 		{"merge",	required_argument, 0, 265},
-		{"merge-after", no_argument, &merge_after, 1},
 		{"mode", required_argument, 0, 'm'},
 		{"out", required_argument, 0, 'o'},
 		{"output-apod", required_argument, 0, 260},
 		{"output-comp", required_argument, 0, 257},
+		{"outperc", required_argument, 0, 269},
+		{"outputalt-apod", required_argument, 0, 267},
+		{"outputalt-comp", required_argument, 0, 268},
 		{"sample-rate",	required_argument, 0, 262},
 		{"tweak", required_argument, 0, 261},
 		{"tweak-early-exit", no_argument, &tweak_early_exit, 1},
-		{"tweak-after",	required_argument, &tweak_after, 1},
 		{"workers", required_argument, 0, 'w'},
+		{"wildcard", required_argument, 0, 266},
 		{0, 0, 0, 0}
 	};
 
 	memset(&set, 0, sizeof(flac_settings));
 	set.apod_anal=NULL;
 	set.apod_output=NULL;
+	set.apod_outputalt=NULL;
 	set.blocksize_limit_lower=256;
 	set.blocksize_limit_upper=65535;
 	set.blocksize_max=4096;
@@ -106,12 +108,15 @@ int main(int argc, char *argv[]){
 	set.channels=2;
 	set.comp_anal="5";
 	set.comp_output="8p";
+	set.comp_outputalt="8";
 	set.diff_comp_settings=0;
 	set.merge=4096;
 	set.minf=UINT32_MAX;
 	set.maxf=0;
+	set.outperc=100;
 	set.mode=-1;
 	set.sample_rate=44100;
+	set.wildcard=0;
 	set.work_count=1;
 
 	while (1){
@@ -197,13 +202,29 @@ int main(int argc, char *argv[]){
 					goodbye("Error: Invalid merge setting\n");
 				break;
 
+			case 266:
+				set.wildcard=atoi(optarg);
+				break;
+
+			case 267:
+				set.apod_outputalt=optarg;
+				break;
+
+			case 268:
+				set.comp_outputalt=optarg;
+				break;
+
+			case 269:
+				set.outperc=atoi(optarg);
+				if(atoi(optarg)<1 || atoi(optarg)>100)
+					goodbye("Error: Invalid --outperc setting (must be in integer between 1 and 100 inclusive)\n");
+				break;
+
 			case '?':
 				goodbye("");
 				break;
 		}
 	}
-	set.merge_after=merge_after;
-	set.tweak_after=tweak_after;
 	set.tweak_early_exit=tweak_early_exit;
 	set.lax=lax;
 	if(!set.lax && set.blocksize_limit_upper>4608)

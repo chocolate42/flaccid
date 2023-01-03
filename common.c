@@ -162,9 +162,20 @@ void parse_blocksize_list(char *list, int **res, size_t *res_cnt){
 void print_settings(flac_settings *set){
 	char *modes[]={"chunk", "gset", "peakset", "gasc"};
 	int i;
-	printf("settings\tmode(%s);lax(%u);analysis_comp(%s);analysis_apod(%s);output_comp(%s);output_apod(%s);tweak_after(%u);tweak(%u);tweak_early_exit(%u);merge_after(%u);merge(%u);"
-		"blocksize_limit_lower(%u);blocksize_limit_upper(%u)", modes[set->mode], set->lax, set->comp_anal, set->apod_anal, set->comp_output, set->apod_output, set->tweak_after, set->tweak, set->tweak_early_exit, set->merge_after, set->merge, set->blocksize_limit_lower, set->blocksize_limit_upper);
-	if(set->blocks_count){
+	printf("settings\tmode(%s);lax(%u);analysis_comp(%s);analysis_apod(%s);output_comp(%s);output_apod(%s);"
+		"blocksize_limit_lower(%u);blocksize_limit_upper(%u)", modes[set->mode], set->lax, set->comp_anal, set->apod_anal, set->comp_output, set->apod_output, set->blocksize_limit_lower, set->blocksize_limit_upper);
+
+	if(set->merge||set->tweak||set->mode==3)
+		printf("blocksize_limit_lower(%u);blocksize_limit_upper(%u)", set->blocksize_limit_lower, set->blocksize_limit_upper);
+
+	printf("tweak(%u);", set->tweak);
+	if(set->tweak)
+		printf("tweak_early_exit(%u);", set->tweak_early_exit);
+	printf("merge(%u);", set->merge);
+
+	if(set->outperc!=100)
+		printf("outperc(%u);outputalt_comp(%s);outputalt_apod(%s);", set->outperc, set->comp_outputalt, set->apod_outputalt);
+	if(set->blocks_count && set->mode!=3){//gasc doesn't use the list
 		printf(";analysis_blocksizes(%u", set->blocks[0]);
 		for(i=1;i<set->blocks_count;++i)
 			printf(",%u", set->blocks[i]);
@@ -179,20 +190,17 @@ void print_stats(stats *stat){
 }
 
 void simple_enc_encode(simple_enc *senc, flac_settings *set, void *input, uint32_t samples, uint64_t curr_sample, int is_anal, stats *stat){
-	assert(senc&&set&&input&&samples);
-	if(senc->sample_cnt && samples!=senc->sample_cnt)//different frame size, delete old
+	assert(senc&&set&&input);
+	assert(samples);
+	if(senc->sample_cnt)
 		FLAC__static_encoder_delete(senc->enc);
-	if(samples!=senc->sample_cnt){//different frame size, create new
-		senc->enc=init_static_encoder(set, samples<16?16:samples, is_anal?set->comp_anal:set->comp_output, is_anal?set->apod_anal:set->apod_output);
-		senc->sample_cnt=samples;
-	}
+	senc->enc=init_static_encoder(set, samples<16?16:samples, is_anal==1?set->comp_anal:(is_anal==0?set->comp_output:set->comp_outputalt), is_anal==1?set->apod_anal:(is_anal==0?set->apod_output:set->apod_outputalt));
+	senc->sample_cnt=samples;
 	set->encode_func(senc->enc, input+curr_sample*set->channels*(set->bps==16?2:4), samples, curr_sample, &(senc->outbuf), &(senc->outbuf_size));//do encode
-	if(stat){
-		if(is_anal)
+	if(stat&&(is_anal==1))
 			stat->effort_anal+=samples;
-		else
-			stat->effort_output+=samples;
-	}
+	else if(stat)
+		stat->effort_output+=samples;
 }
 
 void simple_enc_aio(simple_enc *senc, flac_settings *set, void *input, uint32_t samples, uint64_t curr_sample, int is_anal, MD5_CTX *ctx, FILE *fout, stats *stat){
@@ -203,9 +211,12 @@ void simple_enc_aio(simple_enc *senc, flac_settings *set, void *input, uint32_t 
 		stat->outsize+=fwrite_framestat(senc->outbuf, senc->outbuf_size, fout, &(set->minf), &(set->maxf));
 }
 
-void simple_enc_out(simple_enc *senc, flac_settings *set, void *input, uint64_t *curr_sample, FILE *fout, stats *stat){
-	if(set->diff_comp_settings)
-		simple_enc_aio(senc, set, input, senc->sample_cnt, *curr_sample, 0, NULL, fout, stat);
+void simple_enc_out(simple_enc *senc, flac_settings *set, void *input, uint64_t *curr_sample, FILE *fout, stats *stat, int *outstate){
+	if(set->diff_comp_settings){
+		*outstate+=set->outperc;
+		simple_enc_aio(senc, set, input, senc->sample_cnt, *curr_sample, (*outstate>=100)?0:2, NULL, fout, stat);
+		*outstate=*outstate%100;
+	}
 	else
 		stat->outsize+=fwrite_framestat(senc->outbuf, senc->outbuf_size, fout, &(set->minf), &(set->maxf));
 	(*curr_sample)+=senc->sample_cnt;
@@ -213,7 +224,8 @@ void simple_enc_out(simple_enc *senc, flac_settings *set, void *input, uint64_t 
 
 int simple_enc_eof(simple_enc *senc, flac_settings *set, void *input, uint64_t *curr_sample, uint64_t tot_samples, uint64_t threshold, MD5_CTX *ctx, FILE *fout, stats *stat){
 	if((tot_samples-*curr_sample)<=threshold){//EOF
-		simple_enc_aio(senc, set, input, tot_samples-*curr_sample, *curr_sample, 0, ctx, fout, stat);
+		if(tot_samples-*curr_sample)
+			simple_enc_aio(senc, set, input, tot_samples-*curr_sample, *curr_sample, 0, ctx, fout, stat);
 		*curr_sample=tot_samples;
 		return 1;
 	}

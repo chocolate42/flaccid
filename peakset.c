@@ -121,7 +121,7 @@ int peak_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	assert(i==0);
 	assert(window_size_check==window_size);
 
-	if(!set->merge_after && set->merge){
+	if(set->merge){
 		size_t teff=0, tsaved=0;
 		cstart_sub=clock();
 		merge_pass_mt(frame, set, set->comp_anal, set->apod_anal, &teff, &tsaved, input);
@@ -130,7 +130,7 @@ int peak_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 		stat.time_merge=((double)(clock()-cstart_sub))/CLOCKS_PER_SEC;
 	}
 
-	if(!set->tweak_after && set->tweak){
+	if(set->tweak){
 		size_t teff=0, tsaved=0;
 		cstart_sub=clock();
 		tweak_pass_mt(frame, set, set->comp_anal, set->apod_anal, &teff, &tsaved, input);
@@ -142,24 +142,6 @@ int peak_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	//if used simpler settings for analysis, encode properly here to get comp_output sizes
 	//store encoded frames as most/all of these are likely to be used depending on how much tweaking is done
 	flist_initial_output_encode(frame, set, input);
-
-	if(set->merge_after && set->merge){
-		size_t teff=0, tsaved=0;
-		cstart_sub=clock();
-		merge_pass_mt(frame, set, set->comp_output, set->apod_output, &teff, &tsaved, input);
-		stat.effort_merge=teff;
-		stat.effort_merge/=tot_samples;
-		stat.time_merge=((double)(clock()-cstart_sub))/CLOCKS_PER_SEC;
-	}
-
-	if(set->tweak_after && set->tweak){
-		size_t teff=0, tsaved=0;
-		cstart_sub=clock();
-		tweak_pass_mt(frame, set, set->comp_output, set->apod_output, &teff, &tsaved, input);
-		stat.effort_tweak=teff;
-		stat.effort_tweak/=tot_samples;
-		stat.time_tweak=((double)(clock()-cstart_sub))/CLOCKS_PER_SEC;
-	}
 
 	/* Write optimal result */
 	flist_write(frame, set, input, &(stat.outsize), fout);
