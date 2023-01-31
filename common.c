@@ -189,6 +189,8 @@ void print_stats(stats *stat){
 	printf("\tsize\t%zu\tcpu_time\t%.5f\n", stat->outsize+42, stat->cpu_time);
 }
 
+/*internal*/
+void simple_enc_encode(simple_enc *senc, flac_settings *set, void *input, uint32_t samples, uint64_t curr_sample, int is_anal, stats *stat);
 void simple_enc_encode(simple_enc *senc, flac_settings *set, void *input, uint32_t samples, uint64_t curr_sample, int is_anal, stats *stat){
 	assert(senc&&set&&input);
 	assert(samples);
@@ -203,29 +205,31 @@ void simple_enc_encode(simple_enc *senc, flac_settings *set, void *input, uint32
 		stat->effort_output+=samples;
 }
 
-void simple_enc_aio(simple_enc *senc, flac_settings *set, void *input, uint32_t samples, uint64_t curr_sample, int is_anal, MD5_CTX *ctx, FILE *fout, stats *stat){
-	simple_enc_encode(senc, set, input, samples, curr_sample, is_anal, stat);
+void simple_enc_analyse(simple_enc *senc, flac_settings *set, void *input, uint32_t samples, uint64_t curr_sample, stats *stat, MD5_CTX *ctx){
+	simple_enc_encode(senc, set, input, samples, curr_sample, 1, stat);
 	if(ctx && set->bps==16)//bps!=16 TODO
 		MD5_Update(ctx, input+set->channels*curr_sample*2, samples*set->channels*2);
-	if(fout&&stat)
-		stat->outsize+=fwrite_framestat(senc->outbuf, senc->outbuf_size, fout, &(set->minf), &(set->maxf));
 }
 
-void simple_enc_out(simple_enc *senc, flac_settings *set, void *input, uint64_t *curr_sample, FILE *fout, stats *stat, int *outstate){
+void simple_enc_out(simple_enc *senc, flac_settings *set, void *input, uint64_t *curr_sample, stats *stat, FILE *fout, int *outstate){
 	if(set->diff_comp_settings){
 		*outstate+=set->outperc;
-		simple_enc_aio(senc, set, input, senc->sample_cnt, *curr_sample, (*outstate>=100)?0:2, NULL, fout, stat);
+		simple_enc_encode(senc, set, input, senc->sample_cnt, *curr_sample, (*outstate>=100)?0:2, stat);
 		*outstate=*outstate%100;
 	}
-	else
-		stat->outsize+=fwrite_framestat(senc->outbuf, senc->outbuf_size, fout, &(set->minf), &(set->maxf));
+	stat->outsize+=fwrite_framestat(senc->outbuf, senc->outbuf_size, fout, &(set->minf), &(set->maxf));
 	(*curr_sample)+=senc->sample_cnt;
 }
 
-int simple_enc_eof(simple_enc *senc, flac_settings *set, void *input, uint64_t *curr_sample, uint64_t tot_samples, uint64_t threshold, MD5_CTX *ctx, FILE *fout, stats *stat){
+int simple_enc_eof(simple_enc *senc, flac_settings *set, void *input, uint64_t *curr_sample, uint64_t tot_samples, uint64_t threshold, stats *stat, MD5_CTX *ctx, FILE *fout){
 	if((tot_samples-*curr_sample)<=threshold){//EOF
-		if(tot_samples-*curr_sample)
-			simple_enc_aio(senc, set, input, tot_samples-*curr_sample, *curr_sample, 0, ctx, fout, stat);
+		if(tot_samples-*curr_sample){
+			simple_enc_encode(senc, set, input, tot_samples-*curr_sample, *curr_sample, 0, stat);
+			if(ctx && set->bps==16)//bps!=16 TODO
+				MD5_Update(ctx, input+set->channels**curr_sample*2, (tot_samples-*curr_sample)*set->channels*2);
+			if(fout)
+				stat->outsize+=fwrite_framestat(senc->outbuf, senc->outbuf_size, fout, &(set->minf), &(set->maxf));
+		}
 		*curr_sample=tot_samples;
 		return 1;
 	}

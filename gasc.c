@@ -17,45 +17,45 @@ int gasc_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	cstart=clock();
 	MD5_Init(&ctx);
 
-	if(!simple_enc_eof(a, set, input, &curr_sample, tot_samples, 2*set->blocksize_limit_lower, &ctx, fout, &stat)){//if not eof, init
-		simple_enc_aio(a , set, input, set->blocksize_limit_lower, 0, 1, &ctx, NULL, NULL);
-		simple_enc_aio(b , set, input, set->blocksize_limit_lower, set->blocksize_limit_lower, 1, &ctx, NULL, NULL);
-		simple_enc_encode(ab, set, input, 2*set->blocksize_limit_lower, 0, 1, &stat);
+	if(!simple_enc_eof(a, set, input, &curr_sample, tot_samples, 2*set->blocksize_limit_lower, &stat, &ctx, fout)){//if not eof, init
+		simple_enc_analyse(a , set, input, set->blocksize_limit_lower, 0, &stat, &ctx);
+		simple_enc_analyse(b , set, input, set->blocksize_limit_lower, set->blocksize_limit_lower, &stat, &ctx);
+		simple_enc_analyse(ab, set, input, 2*set->blocksize_limit_lower, 0, &stat, NULL);
 	}
 
 	while(curr_sample<tot_samples){
 		if((a->outbuf_size+b->outbuf_size)<ab->outbuf_size){//dump a naturally
-			simple_enc_out(a, set, input, &curr_sample, fout, &stat, &outstate);
-			if(!simple_enc_eof(a, set, input, &curr_sample, tot_samples, 2*set->blocksize_limit_lower, NULL, fout, &stat)){//if next !eof, iterate
+			simple_enc_out(a, set, input, &curr_sample, &stat, fout, &outstate);
+			if(!simple_enc_eof(a, set, input, &curr_sample, tot_samples, 2*set->blocksize_limit_lower, &stat, NULL, fout)){//if next !eof, iterate
 				swap=a;
 				a=b;
 				b=swap;
-				simple_enc_aio(b, set, input, set->blocksize_limit_lower, curr_sample+set->blocksize_limit_lower, 1, &ctx, NULL, NULL);
-				simple_enc_encode(ab, set, input, 2*set->blocksize_limit_lower, curr_sample, 1, &stat);
+				simple_enc_analyse(b, set, input, set->blocksize_limit_lower, curr_sample+set->blocksize_limit_lower, &stat, &ctx);
+				simple_enc_analyse(ab, set, input, 2*set->blocksize_limit_lower, curr_sample, &stat, NULL);
 			}
-			else if(set->bps==16)//finish MD5
-					MD5_Update(&ctx, input+input_size-((tot_samples%set->blocksize_limit_lower)*2*set->channels), (tot_samples%set->blocksize_limit_lower)*2*set->channels);
+			else if(set->bps==16)//have to manually finish md5 as eof came at an awkward time
+				MD5_Update(&ctx, input+(curr_sample+set->blocksize_limit_lower)*2*set->channels, (tot_samples-(curr_sample+set->blocksize_limit_lower))*2*set->channels);
 		}
 		else if(ab->sample_cnt+set->blocksize_limit_lower>set->blocksize_limit_upper){//dump ab as hit upper limit
-			simple_enc_out(ab, set, input, &curr_sample, fout, &stat, &outstate);
-			if(!simple_enc_eof(a, set, input, &curr_sample, tot_samples, 2*set->blocksize_limit_lower, &ctx, fout, &stat)){//if next !eof, iterate
-				simple_enc_aio(a, set, input, set->blocksize_limit_lower, curr_sample, 1, &ctx, NULL, NULL);
-				simple_enc_aio(b, set, input, set->blocksize_limit_lower, curr_sample+set->blocksize_limit_lower, 1, &ctx, NULL, NULL);
-				simple_enc_encode(ab, set, input, 2*set->blocksize_limit_lower, curr_sample, 1, &stat);
+			simple_enc_out(ab, set, input, &curr_sample, &stat, fout, &outstate);
+			if(!simple_enc_eof(a, set, input, &curr_sample, tot_samples, 2*set->blocksize_limit_lower, &stat, &ctx, fout)){//if next !eof, iterate
+				simple_enc_analyse(a, set, input, set->blocksize_limit_lower, curr_sample, &stat, &ctx);
+				simple_enc_analyse(b, set, input, set->blocksize_limit_lower, curr_sample+set->blocksize_limit_lower, &stat, &ctx);
+				simple_enc_analyse(ab, set, input, 2*set->blocksize_limit_lower, curr_sample, &stat, NULL);
 			}
 		}
 		else if(curr_sample+ab->sample_cnt+set->blocksize_limit_lower>tot_samples){//hit eof in middle of frame
 			if(set->bps==16)
 				MD5_Update(&ctx, input+(curr_sample+ab->sample_cnt)*2*set->channels, (tot_samples-(curr_sample+ab->sample_cnt))*2*set->channels);
-			if(!simple_enc_eof(a, set, input, &curr_sample, tot_samples, tot_samples-curr_sample, NULL, fout, &stat))
+			if(!simple_enc_eof(a, set, input, &curr_sample, tot_samples, tot_samples-curr_sample, &stat, NULL, fout))
 				goodbye("Error: Failed to finalise in-progress frame\n");
 		}
 		else{//iterate
 			swap=a;
 			a=ab;
 			ab=swap;
-			simple_enc_aio(b, set, input, set->blocksize_limit_lower, curr_sample+a->sample_cnt, 1, &ctx, NULL, NULL);
-			simple_enc_encode(ab, set, input, a->sample_cnt+set->blocksize_limit_lower, curr_sample, 1, &stat);
+			simple_enc_analyse(b, set, input, set->blocksize_limit_lower, curr_sample+a->sample_cnt, &stat, &ctx);
+			simple_enc_analyse(ab, set, input, a->sample_cnt+set->blocksize_limit_lower, curr_sample, &stat, NULL);
 		}
 	}
 

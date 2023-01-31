@@ -58,23 +58,21 @@ typedef struct{
 	FLAC__StaticEncoder *enc;
 	uint8_t *outbuf;
 	size_t outbuf_size, sample_cnt;
+	uint64_t curr_sample;
 } simple_enc;
 
-/*encode a frame with a simple_encoder instance*/
-void simple_enc_encode(simple_enc *senc, flac_settings *set, void *input, uint32_t samples, uint64_t curr_sample, int is_anal, stats *stat);
+/*encode an analysis frame with a simple encoder instance
+Also MD5 input if context present, it is up to the analysis algorithm if and when to hash*/
+void simple_enc_analyse(simple_enc *senc, flac_settings *set, void *input, uint32_t samples, uint64_t curr_sample, stats *stat, MD5_CTX *ctx);
 
-/*encode a frame with a simple encoder instance
-Also MD5 input if context present
-Also write to file if IO stream present*/
-void simple_enc_aio(simple_enc *senc, flac_settings *set, void *input, uint32_t samples, uint64_t curr_sample, int is_anal, MD5_CTX *ctx, FILE *fout, stats *stat);
-
-/*If analysis settings == output settings, write precomputed frame to file
+/* Assumes the context has already done an analysis encode with the same input
+If analysis settings == output settings, write precomputed frame to file
 Otherwise, redo frame encode using output settings and write to file
 Advance curr_sample value*/
-void simple_enc_out(simple_enc *senc, flac_settings *set, void *input, uint64_t *curr_sample, FILE *fout, stats *stat, int *outstate);
+void simple_enc_out(simple_enc *senc, flac_settings *set, void *input, uint64_t *curr_sample, stats *stat, FILE *fout, int *outstate);
 
-/*Encode and output the rest of the file as a single frame with output settings if there's not much left of the file
+/*Encode and output the rest of the file as a single frame with output settings if there's not enoug,h of the file left for analysis to chew on
 Advance curr_sample if necessary*/
-int simple_enc_eof(simple_enc *senc, flac_settings *set, void *input, uint64_t *curr_sample, uint64_t tot_samples, uint64_t threshold, MD5_CTX *ctx, FILE *fout, stats *stat);
+int simple_enc_eof(simple_enc *senc, flac_settings *set, void *input, uint64_t *curr_sample, uint64_t tot_samples, uint64_t threshold, stats *stat, MD5_CTX *ctx, FILE *fout);
 
 #endif
