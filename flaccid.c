@@ -17,21 +17,23 @@ char *help=
 	"Usage: flaccid [options]\n"
 	"\nOptions:\n"
 	" --analysis-apod apod_string : Apodization settings to use during analysis\n"
-	" --analysis-comp comp_string: Compression settings to use during analysis\n"
+	" --analysis-comp comp_string : Compression settings to use during analysis\n"
 	" --blocksize-list list,of,sizes : Blocksizes that a mode is allowed to use for analysis.\n"
 	"                                  Different modes have different constraints on valid combinations\n"
-	" --blocksize-limit-lower limit: Minimum blocksize a frame can be\n"
-	" --blocksize-limit-upper limit: Maximum blocksize a frame can be\n"
+	" --blocksize-limit-lower limit : Minimum blocksize a frame can be\n"
+	" --blocksize-limit-upper limit : Maximum blocksize a frame can be\n"
 	" --in infile : Source, pipe unsupported\n"
 	" --lax : Allow non-subset settings\n"
 	" --merge threshold : If set enables merge mode, doing passes until a pass saves less than threshold bytes\n"
 	" --mode mode : Which variable-blocksize algorithm to use. Valid modes: chunk, gasc, gset, peakset\n"
 	" --out outfile : Destination\n"
 	" --output-apod apod_string : Apodization settings to use during output\n"
-	" --output-comp comp_string: Compression settings to use during output\n"
-	" --outperc num: 1-100 integer percentage of how often to use normal output settings (default 100)\n"
+	" --output-comp comp_string : Compression settings to use during output\n"
+	" --outperc num : 1-100 integer percentage of how often to use normal output settings (default 100)\n"
 	" --outputalt-apod apod_string : Secondary output settings to use sometimes if --outperc is not 100\n"
-	" --outputalt-comp comp_string: Secondary output settings to use sometimes if --outperc is not 100\n"
+	" --outputalt-comp comp_string : Secondary output settings to use sometimes if --outperc is not 100\n"
+	" --queue size : Number of frames in output queue (default 8192), when output queue is full it gets flushed.\n"
+	"                Tweak/merge acts on the output queue, allowing parallelism even when the mode used doesn't\n"
 	" --sample-rate num : Set sample rate\n"
 	" --tweak threshold : If set enables tweak mode, doing passes until a pass saves less than threshold bytes\n"
 	" --tweak-early-exit : Tweak tries increasing and decreasing partition in a single pass. Early exit doesn't\n"
@@ -88,6 +90,7 @@ int main(int argc, char *argv[]){
 		{"outperc", required_argument, 0, 269},
 		{"outputalt-apod", required_argument, 0, 267},
 		{"outputalt-comp", required_argument, 0, 268},
+		{"queue", required_argument, 0, 270},
 		{"sample-rate",	required_argument, 0, 262},
 		{"tweak", required_argument, 0, 261},
 		{"tweak-early-exit", no_argument, &tweak_early_exit, 1},
@@ -113,8 +116,9 @@ int main(int argc, char *argv[]){
 	set.merge=4096;
 	set.minf=UINT32_MAX;
 	set.maxf=0;
-	set.outperc=100;
 	set.mode=-1;
+	set.outperc=100;
+	set.queue_size=8192;
 	set.sample_rate=44100;
 	set.wildcard=0;
 	set.work_count=1;
@@ -218,6 +222,12 @@ int main(int argc, char *argv[]){
 				set.outperc=atoi(optarg);
 				if(atoi(optarg)<1 || atoi(optarg)>100)
 					goodbye("Error: Invalid --outperc setting (must be in integer between 1 and 100 inclusive)\n");
+				break;
+			
+			case 270:
+				set.queue_size=atoi(optarg);
+				if(set.queue_size<0)
+					goodbye("Error: Queue size cannot be negative\n");
 				break;
 
 			case '?':

@@ -190,7 +190,11 @@ void print_stats(stats *stat){
 }
 
 /*internal*/
+void queue_merge(queue *q, flac_settings *set);
+void queue_tweak(queue *q, flac_settings *set);
 void simple_enc_encode(simple_enc *senc, flac_settings *set, void *input, uint32_t samples, uint64_t curr_sample, int is_anal, stats *stat);
+void simple_enc_flush(queue *q, flac_settings *set, void *input, stats *stat, FILE *fout, int *outstate);
+
 void simple_enc_encode(simple_enc *senc, flac_settings *set, void *input, uint32_t samples, uint64_t curr_sample, int is_anal, stats *stat){
 	assert(senc&&set&&input);
 	assert(samples);
@@ -198,6 +202,7 @@ void simple_enc_encode(simple_enc *senc, flac_settings *set, void *input, uint32
 		FLAC__static_encoder_delete(senc->enc);
 	senc->enc=init_static_encoder(set, samples<16?16:samples, is_anal==1?set->comp_anal:(is_anal==0?set->comp_output:set->comp_outputalt), is_anal==1?set->apod_anal:(is_anal==0?set->apod_output:set->apod_outputalt));
 	senc->sample_cnt=samples;
+	senc->curr_sample=curr_sample;
 	set->encode_func(senc->enc, input+curr_sample*set->channels*(set->bps==16?2:4), samples, curr_sample, &(senc->outbuf), &(senc->outbuf_size));//do encode
 	if(stat&&(is_anal==1))
 			stat->effort_anal+=samples;
@@ -211,28 +216,73 @@ void simple_enc_analyse(simple_enc *senc, flac_settings *set, void *input, uint3
 		MD5_Update(ctx, input+set->channels*curr_sample*2, samples*set->channels*2);
 }
 
-void simple_enc_out(simple_enc *senc, flac_settings *set, void *input, uint64_t *curr_sample, stats *stat, FILE *fout, int *outstate){
-	if(set->diff_comp_settings){
-		*outstate+=set->outperc;
-		simple_enc_encode(senc, set, input, senc->sample_cnt, *curr_sample, (*outstate>=100)?0:2, stat);
-		*outstate=*outstate%100;
-	}
-	stat->outsize+=fwrite_framestat(senc->outbuf, senc->outbuf_size, fout, &(set->minf), &(set->maxf));
-	(*curr_sample)+=senc->sample_cnt;
-}
-
-int simple_enc_eof(simple_enc *senc, flac_settings *set, void *input, uint64_t *curr_sample, uint64_t tot_samples, uint64_t threshold, stats *stat, MD5_CTX *ctx, FILE *fout){
+int simple_enc_eof(queue *q, simple_enc **senc, flac_settings *set, void *input, uint64_t *curr_sample, uint64_t tot_samples, uint64_t threshold, stats *stat, MD5_CTX *ctx, FILE *fout, int *outstate){
 	if((tot_samples-*curr_sample)<=threshold){//EOF
 		if(tot_samples-*curr_sample){
-			simple_enc_encode(senc, set, input, tot_samples-*curr_sample, *curr_sample, 0, stat);
 			if(ctx && set->bps==16)//bps!=16 TODO
 				MD5_Update(ctx, input+set->channels**curr_sample*2, (tot_samples-*curr_sample)*set->channels*2);
-			if(fout)
-				stat->outsize+=fwrite_framestat(senc->outbuf, senc->outbuf_size, fout, &(set->minf), &(set->maxf));
+			simple_enc_encode(*senc, set, input, tot_samples-*curr_sample, *curr_sample, 1, stat);//do analysis just to treat final frame the same as the rest
+			*senc=simple_enc_out(q, *senc, set, input, curr_sample, stat, fout, outstate);//just add to queue, let analysis implementation flush when it deallocates queue
 		}
-		*curr_sample=tot_samples;
 		return 1;
 	}
 	else
 		return 0;
+}
+
+/*Flush queue to file*/
+void simple_enc_flush(queue *q, flac_settings *set, void *input, stats *stat, FILE *fout, int *outstate){
+	size_t i;
+	if(!q->depth)
+		return;
+	if(set->merge)
+		queue_merge(q, set);
+	if(set->tweak)
+		queue_tweak(q, set);
+	if(set->diff_comp_settings){//encode with output settings if necessary
+		for(i=0;i<q->depth;++i){//OMP TODO
+			*outstate+=set->outperc;			
+			simple_enc_encode(q->sq[i], set, input, q->sq[i]->sample_cnt, q->sq[i]->curr_sample, (*outstate>=100)?0:2, stat);
+			*outstate=*outstate%100;
+		}
+	}
+	for(i=0;i<q->depth;++i)//dump to file
+		stat->outsize+=fwrite_framestat(q->sq[i]->outbuf, q->sq[i]->outbuf_size, fout, &(set->minf), &(set->maxf));
+	q->depth=0;//reset
+}
+
+/*Add analysed+chosen frame to output queue. Swap out simple_enc instance to an unused one, queue takes control of senc*/
+simple_enc* simple_enc_out(queue *q, simple_enc *senc, flac_settings *set, void *input, uint64_t *curr_sample, stats *stat, FILE *fout, int *outstate){
+	simple_enc *ret;
+	if(set->queue_size && q->depth==set->queue_size)
+		simple_enc_flush(q, set, input, stat, fout, outstate);
+	(*curr_sample)+=senc->sample_cnt;
+	ret=q->sq[q->depth];
+	q->sq[q->depth++]=senc;
+	return ret;
+}
+
+void queue_alloc(queue *q, flac_settings *set){
+	size_t i;
+	assert(set->queue_size>0);
+	q->depth=0;
+	q->store=calloc(set->queue_size, sizeof(simple_enc));
+	q->sq=calloc(set->queue_size, sizeof(simple_enc*));
+	for(i=0;i<set->queue_size;++i)
+		q->sq[i]=q->store+i;
+}
+
+void queue_dealloc(queue *q, flac_settings *set, void *input, stats *stat, FILE *fout, int *outstate){
+	simple_enc_flush(q, set, input, stat, fout, outstate);
+	free(q->store);
+	q->store=NULL;
+	free(q->sq);
+	q->sq=NULL;
+}
+
+/*Do merge passes on queue*/
+void queue_merge(queue *q, flac_settings *set){//TODO
+}
+/*Do tweak passes on queue*/
+void queue_tweak(queue *q, flac_settings *set){//TODO
 }

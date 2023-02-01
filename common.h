@@ -14,7 +14,7 @@ typedef mbedtls_md5_context MD5_CTX;
 #endif
 
 typedef struct{
-	int *blocks, diff_comp_settings, tweak, merge, tweak_early_exit, mode, wildcard, outperc;
+	int *blocks, diff_comp_settings, tweak, merge, tweak_early_exit, mode, wildcard, outperc, queue_size;
 	size_t blocks_count;
 	int work_count, comp_anal_used, do_merge;/*working variables*/
 	char *comp_anal, *comp_output, *comp_outputalt, *apod_anal, *apod_output, *apod_outputalt;
@@ -61,18 +61,31 @@ typedef struct{
 	uint64_t curr_sample;
 } simple_enc;
 
+/*output queue*/
+typedef struct{
+	simple_enc *store, **sq;
+	size_t depth;
+} queue;
+
+/*allocate the queue*/
+void queue_alloc(queue *q, flac_settings *set);
+
+/*flush the queue then deallocate*/
+void queue_dealloc(queue *q, flac_settings *set, void *input, stats *stat, FILE *fout, int *outstate);
+
 /*encode an analysis frame with a simple encoder instance
 Also MD5 input if context present, it is up to the analysis algorithm if and when to hash*/
 void simple_enc_analyse(simple_enc *senc, flac_settings *set, void *input, uint32_t samples, uint64_t curr_sample, stats *stat, MD5_CTX *ctx);
 
 /* Assumes the context has already done an analysis encode with the same input
-If analysis settings == output settings, write precomputed frame to file
-Otherwise, redo frame encode using output settings and write to file
+If analysis settings == output settings, add precomputed frame to output queue
+Otherwise, redo frame encode using output settings and add to queue
+Return a fresh context as the queue has taken the old one
 Advance curr_sample value*/
-void simple_enc_out(simple_enc *senc, flac_settings *set, void *input, uint64_t *curr_sample, stats *stat, FILE *fout, int *outstate);
+simple_enc *simple_enc_out(queue *q, simple_enc *senc, flac_settings *set, void *input, uint64_t *curr_sample, stats *stat, FILE *fout, int *outstate);
 
-/*Encode and output the rest of the file as a single frame with output settings if there's not enoug,h of the file left for analysis to chew on
+/*Encode and output the rest of the file as a single frame with output settings if there's not enough of the file left for analysis to chew on
 Advance curr_sample if necessary*/
-int simple_enc_eof(simple_enc *senc, flac_settings *set, void *input, uint64_t *curr_sample, uint64_t tot_samples, uint64_t threshold, stats *stat, MD5_CTX *ctx, FILE *fout);
+int simple_enc_eof(queue *q, simple_enc **senc, flac_settings *set, void *input, uint64_t *curr_sample, uint64_t tot_samples, uint64_t threshold, stats *stat, MD5_CTX *ctx, FILE *fout, int *outstate);
 
 #endif
