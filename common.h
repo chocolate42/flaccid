@@ -14,7 +14,7 @@ typedef mbedtls_md5_context MD5_CTX;
 #endif
 
 typedef struct{
-	int *blocks, diff_comp_settings, tweak, merge, tweak_early_exit, mode, wildcard, outperc, queue_size;
+	int *blocks, diff_comp_settings, tweak, merge, mode, wildcard, outperc, queue_size;
 	size_t blocks_count;
 	int work_count, comp_anal_used, do_merge;/*working variables*/
 	char *comp_anal, *comp_output, *comp_outputalt, *apod_anal, *apod_output, *apod_outputalt;
@@ -63,7 +63,7 @@ typedef struct{
 
 /*output queue*/
 typedef struct{
-	simple_enc *store, **sq;
+	simple_enc **sq;
 	size_t depth;
 } queue;
 

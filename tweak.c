@@ -64,10 +64,7 @@ void tweaktest(size_t *effort, size_t *saved, flac_settings *set, char *comp, ch
 }
 
 void tweak(size_t *effort, size_t *saved, flac_settings *set, char *comp, char *apod, flist *f, void *input, size_t amount){
-	size_t eff=*effort;
 	tweaktest(effort, saved, set, comp, apod, f, input, f->blocksize-amount);
-	if(set->tweak_early_exit && eff!=*effort)//If one direction improved efficiency, it's unlikely the other way will?
-		return;
 	tweaktest(effort, saved, set, comp, apod, f, input, f->blocksize+amount);
 }
 

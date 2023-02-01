@@ -69,7 +69,6 @@ int main(int argc, char *argv[]){
 	uint64_t tot_samples;
 	flac_settings set;
 	static int lax=0;
-	static int tweak_early_exit=0;
 	char *blocklist_str="1152,2304,4608";
 
 	int c, option_index;
@@ -93,7 +92,6 @@ int main(int argc, char *argv[]){
 		{"queue", required_argument, 0, 270},
 		{"sample-rate",	required_argument, 0, 262},
 		{"tweak", required_argument, 0, 261},
-		{"tweak-early-exit", no_argument, &tweak_early_exit, 1},
 		{"workers", required_argument, 0, 'w'},
 		{"wildcard", required_argument, 0, 266},
 		{0, 0, 0, 0}
@@ -235,7 +233,6 @@ int main(int argc, char *argv[]){
 				break;
 		}
 	}
-	set.tweak_early_exit=tweak_early_exit;
 	set.lax=lax;
 	if(!set.lax && set.blocksize_limit_upper>4608)
 		set.blocksize_limit_upper=4608;//<=48KHz assumed fix TODO

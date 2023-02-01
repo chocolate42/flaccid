@@ -162,16 +162,10 @@ void parse_blocksize_list(char *list, int **res, size_t *res_cnt){
 void print_settings(flac_settings *set){
 	char *modes[]={"chunk", "gset", "peakset", "gasc"};
 	int i;
-	printf("settings\tmode(%s);lax(%u);analysis_comp(%s);analysis_apod(%s);output_comp(%s);output_apod(%s);"
-		"blocksize_limit_lower(%u);blocksize_limit_upper(%u)", modes[set->mode], set->lax, set->comp_anal, set->apod_anal, set->comp_output, set->apod_output, set->blocksize_limit_lower, set->blocksize_limit_upper);
+	printf("settings\tmode(%s);lax(%u);analysis_comp(%s);analysis_apod(%s);output_comp(%s);output_apod(%s);tweak(%u);merge(%u);", modes[set->mode], set->lax, set->comp_anal, set->apod_anal, set->comp_output, set->apod_output, set->tweak, set->merge);
 
 	if(set->merge||set->tweak||set->mode==3)
 		printf("blocksize_limit_lower(%u);blocksize_limit_upper(%u)", set->blocksize_limit_lower, set->blocksize_limit_upper);
-
-	printf("tweak(%u);", set->tweak);
-	if(set->tweak)
-		printf("tweak_early_exit(%u);", set->tweak_early_exit);
-	printf("merge(%u);", set->merge);
 
 	if(set->outperc!=100)
 		printf("outperc(%u);outputalt_comp(%s);outputalt_apod(%s);", set->outperc, set->comp_outputalt, set->apod_outputalt);
@@ -266,16 +260,16 @@ void queue_alloc(queue *q, flac_settings *set){
 	size_t i;
 	assert(set->queue_size>0);
 	q->depth=0;
-	q->store=calloc(set->queue_size, sizeof(simple_enc));
 	q->sq=calloc(set->queue_size, sizeof(simple_enc*));
 	for(i=0;i<set->queue_size;++i)
-		q->sq[i]=q->store+i;
+		q->sq[i]=calloc(1, sizeof(simple_enc));
 }
 
 void queue_dealloc(queue *q, flac_settings *set, void *input, stats *stat, FILE *fout, int *outstate){
+	size_t i;
 	simple_enc_flush(q, set, input, stat, fout, outstate);
-	free(q->store);
-	q->store=NULL;
+	for(i=0;i<set->queue_size;++i)
+		free(q->sq[i]);
 	free(q->sq);
 	q->sq=NULL;
 }
@@ -283,6 +277,7 @@ void queue_dealloc(queue *q, flac_settings *set, void *input, stats *stat, FILE 
 /*Do merge passes on queue*/
 void queue_merge(queue *q, flac_settings *set){//TODO
 }
+
 /*Do tweak passes on queue*/
 void queue_tweak(queue *q, flac_settings *set){//TODO
 }

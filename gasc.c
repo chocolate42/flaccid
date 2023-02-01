@@ -65,10 +65,9 @@ int gasc_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 		}
 	}
 	queue_dealloc(&q, set, input, &stat, fout, &outstate);
-	//for some reason freeing these seg faults, despite supposedly fixing _eof() with a proper swap. Investigate TODO
-	//free(a);
-	//free(b);
-	//free(ab);
+	free(a);
+	free(b);
+	free(ab);
 
 	stat.effort_anal/=tot_samples;
 	stat.effort_output/=tot_samples;
