@@ -27,7 +27,7 @@ int fixed_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 
 	/*Instead of reimplementing a multithreaded output queue here, hack simple_enc to do it.
 	By faking analysis frames we can add to output queue and rely on existing code*/
-	set->diff_comp_settings=1;
+	set->diff_comp_settings=set->diff_comp_settings?1:2;
 
 	a=calloc(1, sizeof(simple_enc));
 	queue_alloc(&q, set);
@@ -42,7 +42,7 @@ int fixed_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	simple_enc_dealloc(a);
 	queue_dealloc(&q, set, input, &stat, fout, outstate);
 	free(outstate);
-	set->diff_comp_settings=0;
+	set->diff_comp_settings=set->diff_comp_settings==2?0:1;//reverse hack just in case
 
 	stat.effort_output/=tot_samples;
 	if(set->bps==16)

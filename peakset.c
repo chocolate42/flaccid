@@ -1,6 +1,4 @@
-#include "merge.h"
 #include "peakset.h"
-#include "tweak.h"
 
 #include <assert.h>
 #include <omp.h>
@@ -8,7 +6,7 @@
 #include <time.h>
 
 int peak_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
-	int k;
+	int k, *outstate;
 	size_t effort=0, i, j, *step, step_count;
 	size_t *frame_results, *running_results;
 	uint8_t *running_step;
@@ -17,9 +15,11 @@ int peak_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	size_t print_effort=0;
 	flist *frame=NULL, *frame_curr;
 	peak_hunter *work;
-	FLAC__StaticEncoder *encout;
 	clock_t cstart, cstart_sub;
+	queue q;
+	simple_enc *a;
 	stats stat={0};
+	uint64_t curr_sample=0;
 	cstart=clock();
 
 	if(set->blocks_count==1)
@@ -121,47 +121,25 @@ int peak_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	assert(i==0);
 	assert(window_size_check==window_size);
 
-	if(set->merge){
-		size_t teff=0, tsaved=0;
-		cstart_sub=clock();
-		merge_pass_mt(frame, set, set->comp_anal, set->apod_anal, &teff, &tsaved, input);
-		stat.effort_merge=teff;
-		stat.effort_merge/=tot_samples;
-		stat.time_merge=((double)(clock()-cstart_sub))/CLOCKS_PER_SEC;
+	//use simple_enc to encode
+	set->diff_comp_settings=set->diff_comp_settings?1:2;//hack as analysis not stored
+	a=calloc(1, sizeof(simple_enc));
+	queue_alloc(&q, set);
+	outstate=calloc(set->work_count, sizeof(int));
+	for(frame_curr=frame;frame_curr;frame_curr=frame_curr->next){
+		a->sample_cnt=frame_curr->blocksize;
+		a->curr_sample=curr_sample;
+		a=simple_enc_out(&q, a, set, input, &curr_sample, &stat, fout, outstate);
 	}
-
-	if(set->tweak){
-		size_t teff=0, tsaved=0;
-		cstart_sub=clock();
-		tweak_pass_mt(frame, set, set->comp_anal, set->apod_anal, &teff, &tsaved, input);
-		stat.effort_tweak=teff;
-		stat.effort_tweak/=tot_samples;
-		stat.time_tweak=((double)(clock()-cstart_sub))/CLOCKS_PER_SEC;
+	if(a->curr_sample!=tot_samples){//partial
+		a->sample_cnt=tot_samples-curr_sample;
+		a->curr_sample=curr_sample;
+		a=simple_enc_out(&q, a, set, input, &curr_sample, &stat, fout, outstate);
 	}
+	queue_dealloc(&q, set, input, &stat, fout, outstate);
+	simple_enc_dealloc(a);
+	set->diff_comp_settings=set->diff_comp_settings==2?0:1;//reverse hack just in case
 
-	//if used simpler settings for analysis, encode properly here to get comp_output sizes
-	//store encoded frames as most/all of these are likely to be used depending on how much tweaking is done
-	flist_initial_output_encode(frame, set, input);
-
-	/* Write optimal result */
-	flist_write(frame, set, input, &(stat.outsize), fout);
-	if(!set->diff_comp_settings && !set->tweak && !set->merge)
-		assert(stat.outsize==running_results[window_size]);
-
-	if(tot_samples-(window_size*set->blocks[0])){/* partial end frame */
-		void *partial_outbuf;
-		size_t partial_outbuf_size;
-		encout=init_static_encoder(set, set->blocksize_max, set->comp_output, set->apod_output);
-		set->encode_func(encout,
-			input+((window_size*set->blocks[0])*set->channels*(set->bps==16?2:4)),
-			tot_samples-(window_size*set->blocks[0]),
-			(window_size*set->blocks[0]),
-			&(partial_outbuf),
-			&(partial_outbuf_size)
-		);
-		stat.outsize+=fwrite_framestat(partial_outbuf, partial_outbuf_size, fout, &(set->minf), &(set->maxf));
-		FLAC__static_encoder_delete(encout);
-	}
 	if(set->bps==16)//non-16 bit TODO
 		MD5(((void*)input), input_size, set->hash);
 
