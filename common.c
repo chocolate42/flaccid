@@ -184,8 +184,8 @@ void print_stats(stats *stat){
 }
 
 /*internal*/
-void queue_merge(queue *q, flac_settings *set);
-void queue_tweak(queue *q, flac_settings *set);
+void queue_merge(queue *q, flac_settings *set, void *input, stats *stat);
+void queue_tweak(queue *q, flac_settings *set, void *input, stats *stat);
 void simple_enc_encode(simple_enc *senc, flac_settings *set, void *input, uint32_t samples, uint64_t curr_sample, int is_anal, stats *stat);
 void simple_enc_flush(queue *q, flac_settings *set, void *input, stats *stat, FILE *fout, int *outstate);
 
@@ -224,15 +224,20 @@ int simple_enc_eof(queue *q, simple_enc **senc, flac_settings *set, void *input,
 		return 0;
 }
 
+void simple_enc_dealloc(simple_enc *senc){
+	FLAC__static_encoder_delete(senc->enc);
+	free(senc);
+}
+
 /*Flush queue to file*/
 void simple_enc_flush(queue *q, flac_settings *set, void *input, stats *stat, FILE *fout, int *outstate){
 	size_t i;
 	if(!q->depth)
 		return;
 	if(set->merge)
-		queue_merge(q, set);
+		queue_merge(q, set, input, stat);
 	if(set->tweak)
-		queue_tweak(q, set);
+		queue_tweak(q, set, input, stat);
 	if(set->diff_comp_settings){//encode with output settings if necessary
 		for(i=0;i<q->depth;++i){//OMP TODO
 			*outstate+=set->outperc;			
@@ -269,15 +274,77 @@ void queue_dealloc(queue *q, flac_settings *set, void *input, stats *stat, FILE 
 	size_t i;
 	simple_enc_flush(q, set, input, stat, fout, outstate);
 	for(i=0;i<set->queue_size;++i)
-		free(q->sq[i]);
+		simple_enc_dealloc(q->sq[i]);
 	free(q->sq);
 	q->sq=NULL;
 }
 
+void qtweak(queue *q, flac_settings *set, void *input, stats *stat, int index, size_t newsplit, size_t *saved);
+
 /*Do merge passes on queue*/
-void queue_merge(queue *q, flac_settings *set){//TODO
+void queue_merge(queue *q, flac_settings *set, void *input, stats *stat){//TODO
+}
+
+void qtweak(queue *q, flac_settings *set, void *input, stats *stat, int i, size_t newsplit, size_t *saved){
+	simple_enc *a, *b;
+	size_t bsize=(q->sq[i]->sample_cnt+q->sq[i+1]->sample_cnt)-newsplit;
+
+	if(newsplit<16 || bsize<16)
+		return;
+	if(newsplit>set->blocksize_limit_upper || newsplit<set->blocksize_limit_lower)
+		return;
+	if(bsize>set->blocksize_limit_upper || bsize<set->blocksize_limit_lower)
+		return;
+	if(newsplit>=(q->sq[i]->sample_cnt+q->sq[i+1]->sample_cnt))
+		return;
+
+	a=calloc(1, sizeof(simple_enc));
+	b=calloc(1, sizeof(simple_enc));
+	simple_enc_analyse(a, set, input, newsplit, q->sq[i]->curr_sample, stat, NULL);
+	simple_enc_analyse(b, set, input, bsize, q->sq[i]->curr_sample+newsplit, stat, NULL);
+	if((a->outbuf_size+b->outbuf_size)<(q->sq[i]->outbuf_size+q->sq[i+1]->outbuf_size)){
+		(*saved)+=(q->sq[i]->outbuf_size+q->sq[i+1]->outbuf_size) - (a->outbuf_size+b->outbuf_size);
+		simple_enc_dealloc(q->sq[i]);
+		simple_enc_dealloc(q->sq[i+1]);
+		q->sq[i]=a;
+		q->sq[i+1]=b;
+	}
+	else{
+		simple_enc_dealloc(a);
+		simple_enc_dealloc(b);
+	}
 }
 
 /*Do tweak passes on queue*/
-void queue_tweak(queue *q, flac_settings *set){//TODO
+void queue_tweak(queue *q, flac_settings *set, void *input, stats *stat){
+	size_t i, ind=0, *saved, saved_tot;
+	printf("queue_tweak\n");fflush(stdout);
+	if(!set->tweak)
+		return;
+	saved=calloc(set->work_count, sizeof(size_t));
+	do{
+
+		#pragma omp parallel for num_threads(set->work_count)
+		for(i=0;i<q->depth/2;++i){//even pairs
+			qtweak(q, set, input, stat, 2*i, q->sq[2*i]->sample_cnt-(set->blocksize_min/(ind+2)), &saved[omp_get_thread_num()]);
+			qtweak(q, set, input, stat, 2*i, q->sq[2*i]->sample_cnt+(set->blocksize_min/(ind+2)), &saved[omp_get_thread_num()]);
+		}
+		#pragma omp barrier
+
+		#pragma omp parallel for num_threads(set->work_count)
+		for(i=0;i<(q->depth-1)/2;++i){//odd pairs
+			qtweak(q, set, input, stat, (2*i)+1, q->sq[(2*i)+1]->sample_cnt-(set->blocksize_min/(ind+2)), &saved[omp_get_thread_num()]);
+			qtweak(q, set, input, stat, (2*i)+1, q->sq[(2*i)+1]->sample_cnt+(set->blocksize_min/(ind+2)), &saved[omp_get_thread_num()]);
+		}
+		#pragma omp barrier
+
+		saved_tot=0;
+		for(i=0;i<set->work_count;++i){
+			saved_tot+=saved[i];
+			saved[i]=0;
+		}
+		++ind;
+		fprintf(stderr, "tweak(%zu) saved %zu bytes\n", ind, saved_tot);
+	}while(saved_tot>=set->tweak);
+	free(saved);
 }

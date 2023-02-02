@@ -36,8 +36,6 @@ char *help=
 	"                Tweak/merge acts on the output queue, allowing parallelism even when the mode used doesn't\n"
 	" --sample-rate num : Set sample rate\n"
 	" --tweak threshold : If set enables tweak mode, doing passes until a pass saves less than threshold bytes\n"
-	" --tweak-early-exit : Tweak tries increasing and decreasing partition in a single pass. Early exit doesn't\n"
-	"                      try the second direction if the first saved space\n"
 	" --workers integer : The maximum number of encode threads to run simultaneously\n"
 	"\nCompression settings format:\n"
 	" * Mostly follows ./flac interface, but requires settings to be concatenated into a single string\n"
