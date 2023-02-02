@@ -160,7 +160,7 @@ void parse_blocksize_list(char *list, int **res, size_t *res_cnt){
 }
 
 void print_settings(flac_settings *set){
-	char *modes[]={"chunk", "gset", "peakset", "gasc"};
+	char *modes[]={"chunk", "gset", "peakset", "gasc", "fixed"};
 	int i;
 	printf("settings\tmode(%s);lax(%u);analysis_comp(%s);analysis_apod(%s);output_comp(%s);output_apod(%s);tweak(%u);merge(%u);", modes[set->mode], set->lax, set->comp_anal, set->apod_anal, set->comp_output, set->apod_output, set->tweak, set->merge);
 
@@ -192,7 +192,7 @@ void simple_enc_flush(queue *q, flac_settings *set, void *input, stats *stat, FI
 void simple_enc_encode(simple_enc *senc, flac_settings *set, void *input, uint32_t samples, uint64_t curr_sample, int is_anal, stats *stat){
 	assert(senc&&set&&input);
 	assert(samples);
-	if(senc->sample_cnt)
+	if(senc->enc)
 		FLAC__static_encoder_delete(senc->enc);
 	senc->enc=init_static_encoder(set, samples<16?16:samples, is_anal==1?set->comp_anal:(is_anal==0?set->comp_output:set->comp_outputalt), is_anal==1?set->apod_anal:(is_anal==0?set->apod_output:set->apod_outputalt));
 	senc->sample_cnt=samples;
@@ -239,11 +239,13 @@ void simple_enc_flush(queue *q, flac_settings *set, void *input, stats *stat, FI
 	if(set->tweak)
 		queue_tweak(q, set, input, stat);
 	if(set->diff_comp_settings){//encode with output settings if necessary
+		#pragma omp parallel for num_threads(set->work_count)
 		for(i=0;i<q->depth;++i){//OMP TODO
-			*outstate+=set->outperc;			
+			outstate[omp_get_thread_num()]+=set->outperc;
 			simple_enc_encode(q->sq[i], set, input, q->sq[i]->sample_cnt, q->sq[i]->curr_sample, (*outstate>=100)?0:2, stat);
-			*outstate=*outstate%100;
+			outstate[omp_get_thread_num()]%=100;
 		}
+		#pragma omp barrier
 	}
 	for(i=0;i<q->depth;++i){//dump to file
 		if(q->sq[i]->outbuf_size<set->minf)

@@ -2,6 +2,7 @@
 
 #include "chunk.h"
 #include "common.h"
+#include "fixed.h"
 #include "gasc.h"
 #include "gset.h"
 #include "load.h"
@@ -25,7 +26,7 @@ char *help=
 	" --in infile : Source, pipe unsupported\n"
 	" --lax : Allow non-subset settings\n"
 	" --merge threshold : If set enables merge mode, doing passes until a pass saves less than threshold bytes\n"
-	" --mode mode : Which variable-blocksize algorithm to use. Valid modes: chunk, gasc, gset, peakset\n"
+	" --mode mode : Which variable-blocksize algorithm to use. Valid modes: fixed, peakset, gasc, chunk, gset\n"
 	" --out outfile : Destination\n"
 	" --output-apod apod_string : Apodization settings to use during output\n"
 	" --output-comp comp_string : Compression settings to use during output\n"
@@ -48,7 +49,7 @@ char *help=
 	" * ie tukey(0.5);partial_tukey(2);punchout_tukey(3)\n";
 
 int main(int argc, char *argv[]){
-	int (*encoder[5])(void*, size_t, FILE*, flac_settings*)={chunk_main, gset_main, peak_main, gasc_main};
+	int (*encoder[6])(void*, size_t, FILE*, flac_settings*)={chunk_main, gset_main, peak_main, gasc_main, fixed_main, NULL};
 	char *ipath=NULL, *opath=NULL;
 	FILE *fout;
 	void *input;
@@ -140,6 +141,8 @@ int main(int argc, char *argv[]){
 					set.mode=2;
 				else if(strcmp(optarg, "gasc")==0)
 					set.mode=3;
+				else if(strcmp(optarg, "fixed")==0)
+					set.mode=4;
 				else
 					goodbye("Unknown mode\n");
 				break;
