@@ -48,8 +48,6 @@ int peak_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	for(i=0;i<step_count;++i)
 		effort+=step[i];
 
-	fprintf(stderr, "anal %s comp %s tweak %d merge %d\n", set->comp_anal, set->comp_output, set->tweak, set->merge);
-
 	frame_results=malloc(sizeof(size_t)*step_count*(window_size+1));
 	running_results=malloc(sizeof(size_t)*(window_size+1));
 	running_step=malloc(sizeof(size_t)*(window_size+1));
@@ -128,16 +126,18 @@ int peak_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	outstate=calloc(set->work_count, sizeof(int));
 	for(frame_curr=frame;frame_curr;frame_curr=frame_curr->next){
 		a->sample_cnt=frame_curr->blocksize;
+		assert(a->sample_cnt);
 		a->curr_sample=curr_sample;
 		a=simple_enc_out(&q, a, set, input, &curr_sample, &stat, fout, outstate);
 	}
-	if(a->curr_sample!=tot_samples){//partial
+	if(curr_sample!=tot_samples){//partial
 		a->sample_cnt=tot_samples-curr_sample;
 		a->curr_sample=curr_sample;
 		a=simple_enc_out(&q, a, set, input, &curr_sample, &stat, fout, outstate);
 	}
 	queue_dealloc(&q, set, input, &stat, fout, outstate);
 	simple_enc_dealloc(a);
+	free(outstate);
 	set->diff_comp_settings=set->diff_comp_settings==2?0:1;//reverse hack just in case
 
 	if(set->bps==16)//non-16 bit TODO

@@ -225,7 +225,7 @@ int main(int argc, char *argv[]){
 			
 			case 270:
 				set.queue_size=atoi(optarg);
-				if(set.queue_size<0)
+				if(set.queue_size<=0)
 					goodbye("Error: Queue size cannot be negative\n");
 				break;
 

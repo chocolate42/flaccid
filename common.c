@@ -199,7 +199,7 @@ void simple_enc_encode(simple_enc *senc, flac_settings *set, void *input, uint32
 	senc->curr_sample=curr_sample;
 	set->encode_func(senc->enc, input+curr_sample*set->channels*(set->bps==16?2:4), samples, curr_sample, &(senc->outbuf), &(senc->outbuf_size));//do encode
 	if(stat&&(is_anal==1))
-			stat->effort_anal+=samples;
+		stat->effort_anal+=samples;
 	else if(stat)
 		stat->effort_output+=samples;
 }
@@ -211,7 +211,7 @@ void simple_enc_analyse(simple_enc *senc, flac_settings *set, void *input, uint3
 }
 
 int simple_enc_eof(queue *q, simple_enc **senc, flac_settings *set, void *input, uint64_t *curr_sample, uint64_t tot_samples, uint64_t threshold, stats *stat, MD5_CTX *ctx, FILE *fout, int *outstate){
-	if((tot_samples-*curr_sample)<=threshold){//EOF
+	if((tot_samples-*curr_sample)<threshold){//EOF
 		if(tot_samples-*curr_sample){
 			if(ctx && set->bps==16)//bps!=16 TODO
 				MD5_Update(ctx, input+set->channels**curr_sample*2, (tot_samples-*curr_sample)*set->channels*2);
@@ -240,7 +240,7 @@ void simple_enc_flush(queue *q, flac_settings *set, void *input, stats *stat, FI
 		queue_tweak(q, set, input, stat);
 	if(set->diff_comp_settings){//encode with output settings if necessary
 		#pragma omp parallel for num_threads(set->work_count)
-		for(i=0;i<q->depth;++i){//OMP TODO
+		for(i=0;i<q->depth;++i){
 			outstate[omp_get_thread_num()]+=set->outperc;
 			simple_enc_encode(q->sq[i], set, input, q->sq[i]->sample_cnt, q->sq[i]->curr_sample, (*outstate>=100)?0:2, stat);
 			outstate[omp_get_thread_num()]%=100;
@@ -264,7 +264,7 @@ void simple_enc_flush(queue *q, flac_settings *set, void *input, stats *stat, FI
 /*Add analysed+chosen frame to output queue. Swap out simple_enc instance to an unused one, queue takes control of senc*/
 simple_enc* simple_enc_out(queue *q, simple_enc *senc, flac_settings *set, void *input, uint64_t *curr_sample, stats *stat, FILE *fout, int *outstate){
 	simple_enc *ret;
-	if(set->queue_size && q->depth==set->queue_size)
+	if(q->depth==set->queue_size)
 		simple_enc_flush(q, set, input, stat, fout, outstate);
 	(*curr_sample)+=senc->sample_cnt;
 	ret=q->sq[q->depth];
@@ -297,7 +297,7 @@ int senc_comp_merge(const void *aa, const void *bb);
 
 size_t qmerge(queue *q, flac_settings *set, void *input, stats *stat, int i, size_t *saved){
 	simple_enc *a;
-	if(!q->sq[i]->sample_cnt || !q->sq[i+1]->sample_cnt)
+	if(!(q->sq[i]->sample_cnt) || !(q->sq[i+1]->sample_cnt))
 		return 0;
 	if((q->sq[i]->sample_cnt+q->sq[i+1]->sample_cnt)>set->blocksize_limit_upper)
 		return 0;
@@ -306,6 +306,7 @@ size_t qmerge(queue *q, flac_settings *set, void *input, stats *stat, int i, siz
 	if(a->outbuf_size<(q->sq[i]->outbuf_size+q->sq[i+1]->outbuf_size)){
 		(*saved)+=(q->sq[i]->outbuf_size+q->sq[i+1]->outbuf_size) - a->outbuf_size;
 		FLAC__static_encoder_delete(q->sq[i+1]->enc);//simple_enc only deletes previous if sample_cnt>0, and we're manually messing with that
+		q->sq[i+1]->enc=NULL;
 		q->sq[i+1]->sample_cnt=0;
 		simple_enc_dealloc(q->sq[i]);
 		q->sq[i]=a;
