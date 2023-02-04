@@ -12,6 +12,10 @@
 #else
 #include "mbedtls/md5.h"
 typedef mbedtls_md5_context MD5_CTX;
+void MD5_Init(MD5_CTX *ctx);
+void MD5_Final(uint8_t *h, MD5_CTX *ctx);
+int MD5(const unsigned char *d, size_t s, unsigned char *h);
+int MD5_Update(MD5_CTX *ctx, const unsigned char *d, size_t s);
 #endif
 
 typedef struct{

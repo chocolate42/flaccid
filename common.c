@@ -6,18 +6,21 @@
 
 /*Implement OpenSSL MD5 API with mbedtls*/
 #ifndef USE_OPENSSL
-void MD5_Init(MD5_CTX *ctx);
-void MD5_Final(uint8_t *sha1, MD5_CTX *ctx);
-int (*MD5)(const unsigned char*, size_t, unsigned char*) = &mbedtls_md5;
-int (*MD5_Update)(MD5_CTX*, const unsigned char*, size_t) = &mbedtls_md5_update;
-
 void MD5_Init(MD5_CTX *ctx){
 	mbedtls_md5_init(ctx);
 	mbedtls_md5_starts(ctx);
 }
 
-void MD5_Final(uint8_t *sha1, MD5_CTX *ctx){
-	mbedtls_md5_finish(ctx, sha1);
+void MD5_Final(uint8_t *h, MD5_CTX *ctx){
+	mbedtls_md5_finish(ctx, h);
+}
+
+int MD5(const unsigned char *d, size_t s, unsigned char *h){
+	return mbedtls_md5(d, s, h);
+}
+
+int MD5_Update(MD5_CTX* ctx, const unsigned char *d, size_t s){
+	return mbedtls_md5_update(ctx, d, s);
 }
 #endif
 
