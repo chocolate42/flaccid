@@ -20,6 +20,9 @@ int peak_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	simple_enc *a;
 	stats stat={0};
 	uint64_t curr_sample=0;
+	MD5_CTX ctx;
+
+	MD5_Init(&ctx);
 	cstart=clock();
 
 	if(set->blocks_count==1)
@@ -140,8 +143,8 @@ int peak_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	free(outstate);
 	set->diff_comp_settings=set->diff_comp_settings==2?0:1;//reverse hack just in case
 
-	if(set->bps==16)//non-16 bit TODO
-		MD5(((void*)input), input_size, set->hash);
+	MD5_UpdateSamples(&ctx, input, 0, tot_samples, set);
+	MD5_Final(set->hash, &ctx);
 
 	stat.effort_anal=0;
 	for(i=0;i<set->blocks_count;++i)//analysis effort approaches the sum of the normalised blocksizes as window_size approaches infinity

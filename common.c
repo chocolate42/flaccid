@@ -24,6 +24,21 @@ int MD5_Update(MD5_CTX* ctx, const unsigned char *d, size_t s){
 }
 #endif
 
+void MD5_UpdateSamples(MD5_CTX *ctx, const void *input, size_t curr_sample, size_t sample_cnt, flac_settings *set){
+	size_t i, j, width;
+	if(set->bps==16)
+		MD5_Update(ctx, input+(curr_sample*2*set->channels), sample_cnt*2*set->channels);
+	else if(set->bps==32)
+		MD5_Update(ctx, input+(curr_sample*4*set->channels), sample_cnt*4*set->channels);
+	else{
+		width=set->bps==8?1:(set->bps==12?2:3);
+		for(i=0;i<sample_cnt;++i){
+			for(j=0;j<set->channels;++j)
+				MD5_Update(ctx, input+((curr_sample+i)*4*set->channels)+(j*4), width);
+		}
+	}
+}
+
 int comp_int_asc(const void *aa, const void *bb){
 	int *a=(int*)aa;
 	int *b=(int*)bb;
@@ -209,15 +224,15 @@ void simple_enc_encode(simple_enc *senc, flac_settings *set, void *input, uint32
 
 void simple_enc_analyse(simple_enc *senc, flac_settings *set, void *input, uint32_t samples, uint64_t curr_sample, stats *stat, MD5_CTX *ctx){
 	simple_enc_encode(senc, set, input, samples, curr_sample, 1, stat);
-	if(ctx && set->bps==16)//bps!=16 TODO
-		MD5_Update(ctx, input+set->channels*curr_sample*2, samples*set->channels*2);
+	if(ctx)
+		MD5_UpdateSamples(ctx, input, curr_sample, samples, set);
 }
 
 int simple_enc_eof(queue *q, simple_enc **senc, flac_settings *set, void *input, uint64_t *curr_sample, uint64_t tot_samples, uint64_t threshold, stats *stat, MD5_CTX *ctx, FILE *fout, int *outstate){
 	if((tot_samples-*curr_sample)<threshold){//EOF
 		if(tot_samples-*curr_sample){
-			if(ctx && set->bps==16)//bps!=16 TODO
-				MD5_Update(ctx, input+set->channels**curr_sample*2, (tot_samples-*curr_sample)*set->channels*2);
+			if(ctx)
+				MD5_UpdateSamples(ctx, input, *curr_sample, tot_samples-*curr_sample, set);
 			simple_enc_encode(*senc, set, input, tot_samples-*curr_sample, *curr_sample, 1, stat);//do analysis just to treat final frame the same as the rest
 			*senc=simple_enc_out(q, *senc, set, input, curr_sample, stat, fout, outstate);//just add to queue, let analysis implementation flush when it deallocates queue
 		}

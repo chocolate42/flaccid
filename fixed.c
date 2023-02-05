@@ -37,8 +37,7 @@ int fixed_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	while((curr_sample+set->blocksize_min)<=tot_samples){
 		a->sample_cnt=set->blocksize_min;
 		a->curr_sample=curr_sample;
-		if(set->bps==16)
-			MD5_Update(&ctx, input+(curr_sample*2*set->channels), a->sample_cnt*2*set->channels);
+		MD5_UpdateSamples(&ctx, input, curr_sample, a->sample_cnt, set);
 		a=simple_enc_out(&q, a, set, input, &curr_sample, &stat, fout, outstate);
 	}
 	queue_dealloc(&q, set, input, &stat, fout, outstate);
@@ -58,14 +57,13 @@ int fixed_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 			&partial_out,
 			&partial_outsize
 		);
-		if(set->bps==16)
-			MD5_Update(&ctx, input+(curr_sample*2*set->channels), (tot_samples-curr_sample)*2*set->channels);
+		MD5_UpdateSamples(&ctx, input, curr_sample, tot_samples-curr_sample, set);
 		fwrite(partial_out, 1, partial_outsize, fout);
 	}
 
+	MD5_Final(set->hash, &ctx);
+
 	stat.effort_output/=tot_samples;
-	if(set->bps==16)
-		MD5_Final(set->hash, &ctx);
 	stat.cpu_time=((double)(clock()-cstart))/CLOCKS_PER_SEC;
 	print_settings(set);
 	print_stats(&stat);

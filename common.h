@@ -30,6 +30,8 @@ typedef struct{
 	FLAC__bool (*encode_func) (FLAC__StaticEncoder*, const void*, uint32_t, uint64_t, void*, size_t*);
 } flac_settings;
 
+void MD5_UpdateSamples(MD5_CTX *ctx, const void *input, size_t curr_sample, size_t sample_cnt, flac_settings *set);
+
 typedef struct{
 	double effort_anal, effort_output, effort_tweak, effort_merge;
 	double cpu_time, time_anal, time_tweak, time_merge;
