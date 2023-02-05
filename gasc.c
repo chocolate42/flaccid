@@ -21,7 +21,8 @@ int gasc_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	queue_alloc(&q, set);
 	outstate=calloc(set->work_count, sizeof(int));
 
-	MD5_Init(&ctx);
+	if(set->md5)
+		MD5_Init(&ctx);
 
 	cstart=clock();
 	if(!simple_enc_eof(&q, &a, set, input, &curr_sample, tot_samples, 2*set->blocksize_limit_lower, &stat, &ctx, fout, outstate)){//if not eof, init
@@ -40,7 +41,7 @@ int gasc_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 				simple_enc_analyse(b, set, input, set->blocksize_limit_lower, curr_sample+set->blocksize_limit_lower, &stat, &ctx);
 				simple_enc_analyse(ab, set, input, 2*set->blocksize_limit_lower, curr_sample, &stat, NULL);
 			}
-			else//have to manually finish md5 as eof came at an awkward time
+			else if(set->md5)//have to manually finish md5 as eof came at an awkward time
 				MD5_UpdateSamples(&ctx, input, curr_sample-(curr_sample%set->blocksize_limit_lower), (curr_sample%set->blocksize_limit_lower), set);
 		}
 		else if(ab->sample_cnt+set->blocksize_limit_lower>set->blocksize_limit_upper){//dump ab as hit upper limit
@@ -52,8 +53,8 @@ int gasc_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 			}
 		}
 		else if(curr_sample+ab->sample_cnt+set->blocksize_limit_lower>tot_samples){//hit eof in middle of frame
-			printf("curr_sample %zu sample_cnt %zu tot_samples %zu\n", curr_sample+ab->sample_cnt, (tot_samples-(curr_sample+ab->sample_cnt)), tot_samples);fflush(stdout);
-			MD5_UpdateSamples(&ctx, input, curr_sample+ab->sample_cnt, (tot_samples-(curr_sample+ab->sample_cnt)), set);
+			if(set->md5)
+				MD5_UpdateSamples(&ctx, input, curr_sample+ab->sample_cnt, (tot_samples-(curr_sample+ab->sample_cnt)), set);
 			if(!simple_enc_eof(&q, &a, set, input, &curr_sample, tot_samples, tot_samples, &stat, NULL, fout, outstate))
 				goodbye("Error: Failed to finalise in-progress frame\n");
 		}
@@ -71,7 +72,8 @@ int gasc_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	free(ab);
 	free(outstate);
 
-	MD5_Final(set->hash, &ctx);
+	if(set->md5)
+		MD5_Final(set->hash, &ctx);
 
 	stat.effort_anal/=tot_samples;
 	stat.effort_output/=tot_samples;

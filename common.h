@@ -19,7 +19,7 @@ int MD5_Update(MD5_CTX *ctx, const unsigned char *d, size_t s);
 #endif
 
 typedef struct{
-	int *blocks, diff_comp_settings, tweak, merge, mode, wildcard, outperc, queue_size;
+	int *blocks, diff_comp_settings, tweak, merge, mode, wildcard, outperc, queue_size, md5;
 	size_t blocks_count;
 	int work_count, comp_anal_used, do_merge;/*working variables*/
 	char *comp_anal, *comp_output, *comp_outputalt, *apod_anal, *apod_output, *apod_outputalt;

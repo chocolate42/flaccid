@@ -25,7 +25,8 @@ int fixed_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	if(set->diff_comp_settings)
 		goodbye("Error: Fixed blocking strategy cannot have different comp settings\n");
 
-	MD5_Init(&ctx);
+	if(set->md5)
+		MD5_Init(&ctx);
 	cstart=clock();
 
 	/*Instead of reimplementing a multithreaded output queue here, hack simple_enc to do it.
@@ -37,7 +38,8 @@ int fixed_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	while((curr_sample+set->blocksize_min)<=tot_samples){
 		a->sample_cnt=set->blocksize_min;
 		a->curr_sample=curr_sample;
-		MD5_UpdateSamples(&ctx, input, curr_sample, a->sample_cnt, set);
+		if(set->md5)
+			MD5_UpdateSamples(&ctx, input, curr_sample, a->sample_cnt, set);
 		a=simple_enc_out(&q, a, set, input, &curr_sample, &stat, fout, outstate);
 	}
 	queue_dealloc(&q, set, input, &stat, fout, outstate);
@@ -57,11 +59,13 @@ int fixed_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 			&partial_out,
 			&partial_outsize
 		);
-		MD5_UpdateSamples(&ctx, input, curr_sample, tot_samples-curr_sample, set);
+		if(set->md5)
+			MD5_UpdateSamples(&ctx, input, curr_sample, tot_samples-curr_sample, set);
 		fwrite(partial_out, 1, partial_outsize, fout);
 	}
 
-	MD5_Final(set->hash, &ctx);
+	if(set->md5)
+		MD5_Final(set->hash, &ctx);
 
 	stat.effort_output/=tot_samples;
 	stat.cpu_time=((double)(clock()-cstart))/CLOCKS_PER_SEC;

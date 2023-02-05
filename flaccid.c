@@ -27,6 +27,7 @@ char *help=
 	" --lax : Allow non-subset settings\n"
 	" --merge threshold : If set enables merge mode, doing passes until a pass saves less than threshold bytes\n"
 	" --mode mode : Which variable-blocksize algorithm to use. Valid modes: fixed, peakset, gasc, chunk, gset\n"
+	" --no-md5 : Disable MD5 generation\n"
 	" --out outfile : Destination\n"
 	" --output-apod apod_string : Apodization settings to use during output\n"
 	" --output-comp comp_string : Compression settings to use during output\n"
@@ -82,6 +83,7 @@ int main(int argc, char *argv[]){
 		{"lax", no_argument, &lax, 1},
 		{"merge",	required_argument, 0, 265},
 		{"mode", required_argument, 0, 'm'},
+		{"no-md5", no_argument, 0, 271},
 		{"out", required_argument, 0, 'o'},
 		{"output-apod", required_argument, 0, 260},
 		{"output-comp", required_argument, 0, 257},
@@ -113,6 +115,7 @@ int main(int argc, char *argv[]){
 	set.merge=4096;
 	set.minf=UINT32_MAX;
 	set.maxf=0;
+	set.md5=1;
 	set.mode=-1;
 	set.outperc=100;
 	set.queue_size=8192;
@@ -227,6 +230,10 @@ int main(int argc, char *argv[]){
 				set.queue_size=atoi(optarg);
 				if(set.queue_size<=0)
 					goodbye("Error: Queue size cannot be negative\n");
+				break;
+
+			case 271:
+				set.md5=0;
 				break;
 
 			case '?':

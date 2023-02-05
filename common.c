@@ -224,14 +224,14 @@ void simple_enc_encode(simple_enc *senc, flac_settings *set, void *input, uint32
 
 void simple_enc_analyse(simple_enc *senc, flac_settings *set, void *input, uint32_t samples, uint64_t curr_sample, stats *stat, MD5_CTX *ctx){
 	simple_enc_encode(senc, set, input, samples, curr_sample, 1, stat);
-	if(ctx)
+	if(ctx && set->md5)
 		MD5_UpdateSamples(ctx, input, curr_sample, samples, set);
 }
 
 int simple_enc_eof(queue *q, simple_enc **senc, flac_settings *set, void *input, uint64_t *curr_sample, uint64_t tot_samples, uint64_t threshold, stats *stat, MD5_CTX *ctx, FILE *fout, int *outstate){
 	if((tot_samples-*curr_sample)<threshold){//EOF
 		if(tot_samples-*curr_sample){
-			if(ctx)
+			if(ctx && set->md5)
 				MD5_UpdateSamples(ctx, input, *curr_sample, tot_samples-*curr_sample, set);
 			simple_enc_encode(*senc, set, input, tot_samples-*curr_sample, *curr_sample, 1, stat);//do analysis just to treat final frame the same as the rest
 			*senc=simple_enc_out(q, *senc, set, input, curr_sample, stat, fout, outstate);//just add to queue, let analysis implementation flush when it deallocates queue
