@@ -201,13 +201,16 @@ void print_stats(stats *stat){
 	printf("\tsize\t%zu\tcpu_time\t%.5f\n", stat->outsize+42, stat->cpu_time);
 }
 
-/*internal*/
-void queue_merge(queue *q, flac_settings *set, void *input, stats *stat);
-void queue_tweak(queue *q, flac_settings *set, void *input, stats *stat);
-void simple_enc_encode(simple_enc *senc, flac_settings *set, void *input, uint32_t samples, uint64_t curr_sample, int is_anal, stats *stat);
-void simple_enc_flush(queue *q, flac_settings *set, void *input, stats *stat, FILE *fout, int *outstate);
+static void queue_merge(queue *q, flac_settings *set, void *input, stats *stat);
+static void queue_tweak(queue *q, flac_settings *set, void *input, stats *stat);
+//single merge/tweak test
+static void qtweak(queue *q, flac_settings *set, void *input, stats *stat, int index, size_t newsplit, size_t *saved);
+static size_t qmerge(queue *q, flac_settings *set, void *input, stats *stat, int index, size_t *saved);
+static void simple_enc_encode(simple_enc *senc, flac_settings *set, void *input, uint32_t samples, uint64_t curr_sample, int is_anal, stats *stat);
+static void simple_enc_flush(queue *q, flac_settings *set, void *input, stats *stat, FILE *fout, int *outstate);
+static int senc_comp_merge(const void *aa, const void *bb);
 
-void simple_enc_encode(simple_enc *senc, flac_settings *set, void *input, uint32_t samples, uint64_t curr_sample, int is_anal, stats *stat){
+static void simple_enc_encode(simple_enc *senc, flac_settings *set, void *input, uint32_t samples, uint64_t curr_sample, int is_anal, stats *stat){
 	assert(senc&&set&&input);
 	assert(samples);
 	if(senc->enc)
@@ -248,7 +251,7 @@ void simple_enc_dealloc(simple_enc *senc){
 }
 
 /*Flush queue to file*/
-void simple_enc_flush(queue *q, flac_settings *set, void *input, stats *stat, FILE *fout, int *outstate){
+static void simple_enc_flush(queue *q, flac_settings *set, void *input, stats *stat, FILE *fout, int *outstate){
 	size_t i;
 	if(!q->depth)
 		return;
@@ -308,12 +311,7 @@ void queue_dealloc(queue *q, flac_settings *set, void *input, stats *stat, FILE 
 	q->sq=NULL;
 }
 
-//single merge/tweak test
-void qtweak(queue *q, flac_settings *set, void *input, stats *stat, int index, size_t newsplit, size_t *saved);
-size_t qmerge(queue *q, flac_settings *set, void *input, stats *stat, int index, size_t *saved);
-int senc_comp_merge(const void *aa, const void *bb);
-
-size_t qmerge(queue *q, flac_settings *set, void *input, stats *stat, int i, size_t *saved){
+static size_t qmerge(queue *q, flac_settings *set, void *input, stats *stat, int i, size_t *saved){
 	simple_enc *a;
 	if(!(q->sq[i]->sample_cnt) || !(q->sq[i+1]->sample_cnt))
 		return 0;
@@ -336,7 +334,7 @@ size_t qmerge(queue *q, flac_settings *set, void *input, stats *stat, int i, siz
 	}
 }
 
-int senc_comp_merge(const void *aa, const void *bb){
+static int senc_comp_merge(const void *aa, const void *bb){
 	simple_enc *a=*(simple_enc**)aa;
 	simple_enc *b=*(simple_enc**)bb;
 	if(!a->sample_cnt)
@@ -347,7 +345,7 @@ int senc_comp_merge(const void *aa, const void *bb){
 }
 
 /*Do merge passes on queue*/
-void queue_merge(queue *q, flac_settings *set, void *input, stats *stat){
+static void queue_merge(queue *q, flac_settings *set, void *input, stats *stat){
 	size_t i, ind=0, merged=0, *saved, saved_tot;
 	if(!set->merge)
 		return;
@@ -383,7 +381,7 @@ void queue_merge(queue *q, flac_settings *set, void *input, stats *stat){
 	free(saved);
 }
 
-void qtweak(queue *q, flac_settings *set, void *input, stats *stat, int i, size_t newsplit, size_t *saved){
+static void qtweak(queue *q, flac_settings *set, void *input, stats *stat, int i, size_t newsplit, size_t *saved){
 	simple_enc *a, *b;
 	size_t bsize=(q->sq[i]->sample_cnt+q->sq[i+1]->sample_cnt)-newsplit;
 
@@ -414,7 +412,7 @@ void qtweak(queue *q, flac_settings *set, void *input, stats *stat, int i, size_
 }
 
 /*Do tweak passes on queue*/
-void queue_tweak(queue *q, flac_settings *set, void *input, stats *stat){
+static void queue_tweak(queue *q, flac_settings *set, void *input, stats *stat){
 	size_t i, ind=0, *saved, saved_tot;
 	if(!set->tweak)
 		return;
