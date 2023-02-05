@@ -6,88 +6,77 @@
 #include <time.h>
 
 int gset_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
-	size_t i;
+	int *outstate;
 	uint64_t curr_sample, tot_samples=input_size/(set->channels*(set->bps==16?2:4));
-	greed_controller greed;
 	MD5_CTX ctx;
-	FLAC__StaticEncoder *oenc;
-	size_t anal_runs=0;
 	stats stat={0};
 	clock_t cstart;
+	simple_enc **genc;
+	double besteff, *curreff;
+	size_t best, iterations=0, i;
+	queue q;
+
 	cstart=clock();
+	if(set->md5)
+		MD5_Init(&ctx);
+	outstate=calloc(set->work_count, sizeof(int));
+	queue_alloc(&q, set);
 
-	MD5_Init(&ctx);
-
-	//blocks sorted descending should help occupancy of multithreading
-	qsort(set->blocks, set->blocks_count, sizeof(int), comp_int_desc);
-
-	greed.genc=malloc(set->blocks_count*sizeof(greed_encoder));
-	greed.genc_count=set->blocks_count;
+	genc=malloc(sizeof(simple_enc*)*set->blocks_count);
 	for(i=0;i<set->blocks_count;++i)
-		greed.genc[i].enc=init_static_encoder(set, set->blocks[i], set->comp_anal, set->apod_anal);
+		genc[i]=calloc(1, sizeof(simple_enc));
+	curreff=malloc(sizeof(double)*set->blocks_count);
 
 	for(curr_sample=0;curr_sample<tot_samples;){
-		size_t skip=0;
 		#pragma omp parallel for num_threads(set->work_count)
-		for(i=0;i<greed.genc_count;++i){
-			if((tot_samples-curr_sample)>=FLAC__stream_encoder_get_blocksize(greed.genc[i].enc->stream_encoder)){
-				set->encode_func(greed.genc[i].enc, input+(curr_sample*set->channels*(set->bps==16?2:4)), FLAC__stream_encoder_get_blocksize(greed.genc[i].enc->stream_encoder), curr_sample, &(greed.genc[i].outbuf), &(greed.genc[i].outbuf_size));
-				greed.genc[i].frame_efficiency=greed.genc[i].outbuf_size;
-				greed.genc[i].frame_efficiency/=FLAC__stream_encoder_get_blocksize(greed.genc[i].enc->stream_encoder);
+		for(i=0;i<set->blocks_count;++i){//encode all in set
+			if(curr_sample+set->blocks[i]<=tot_samples){//if they don't overflow the input
+				simple_enc_analyse(genc[i], set, input, set->blocks[i], curr_sample, &stat, NULL);
+				curreff[i]=genc[i]->outbuf_size;
+				curreff[i]/=set->blocks[i];
 			}
 			else
-				greed.genc[i].frame_efficiency=9999.0;
+				curreff[i]=9999.0;
 		}
 		#pragma omp barrier
-		for(i=0;i<greed.genc_count;++i){
-			if(greed.genc[i].frame_efficiency>9998.0)
-				++skip;
+		//find the most efficient next block
+		besteff=9998.0;
+		best=set->blocks_count;
+		for(i=0;i<set->blocks_count;++i){
+			if(curreff[i]<besteff){
+				besteff=curreff[i];
+				best=i;
+			}
 		}
-		if(skip==greed.genc_count){//partial frame at end
-			oenc=init_static_encoder(set, (tot_samples-curr_sample)<16?16:(tot_samples-curr_sample), set->comp_output, set->apod_output);
-			set->encode_func(oenc, input+(curr_sample*set->channels*(set->bps==16?2:4)), tot_samples-curr_sample, curr_sample, &(greed.genc[0].outbuf), &(greed.genc[0].outbuf_size));
-			MD5_Update(&ctx, ((void*)input)+curr_sample*set->channels*(set->bps/8), (tot_samples-curr_sample)*set->channels*(set->bps/8));
-			stat.outsize+=fwrite_framestat(greed.genc[0].outbuf, greed.genc[0].outbuf_size, fout, &(set->minf), &(set->maxf));
-			FLAC__static_encoder_delete(oenc);
-			curr_sample=tot_samples;
+		if(best==set->blocks_count){//partial end frame
+				simple_enc_analyse(genc[0], set, input, tot_samples-curr_sample, curr_sample, &stat, &ctx);
+				genc[0]=simple_enc_out(&q, genc[0], set, input, &curr_sample, &stat, fout, outstate);
 		}
 		else{
-			double smallest_val=8888.0;
-			size_t smallest_index=greed.genc_count;
-			for(i=0;i<greed.genc_count;++i){
-				if(greed.genc[i].frame_efficiency<smallest_val){
-					smallest_val=greed.genc[i].frame_efficiency;
-					smallest_index=i;
-				}
-			}
-			assert(smallest_index!=greed.genc_count);
-			MD5_Update(&ctx, ((void*)input)+curr_sample*set->channels*(set->bps/8), set->blocks[smallest_index]*set->channels*(set->bps/8));
-			if(set->diff_comp_settings){
-				oenc=init_static_encoder(set, set->blocks[smallest_index], set->comp_output, set->apod_output);
-				set->encode_func(oenc, input+(curr_sample*set->channels*(set->bps==16?2:4)), set->blocks[smallest_index], curr_sample, &(greed.genc[smallest_index].outbuf), &(greed.genc[smallest_index].outbuf_size));
-				stat.outsize+=fwrite_framestat(greed.genc[smallest_index].outbuf, greed.genc[smallest_index].outbuf_size, fout, &(set->minf), &(set->maxf));
-				FLAC__static_encoder_delete(oenc);
-			}
-			else
-				stat.outsize+=fwrite_framestat(greed.genc[smallest_index].outbuf, greed.genc[smallest_index].outbuf_size, fout, &(set->minf), &(set->maxf));
-			curr_sample+=set->blocks[smallest_index];
+			if(set->md5)
+				MD5_UpdateSamples(&ctx, input, curr_sample, set->blocks[best], set);
+			genc[best]=simple_enc_out(&q, genc[best], set, input, &curr_sample, &stat, fout, outstate);
 		}
-		++anal_runs;
+		++iterations;
 	}
-	if(set->bps==16)//non-16 bit TODO
+	if(set->md5)
 		MD5_Final(set->hash, &ctx);
+	queue_dealloc(&q, set, input, &stat, fout, outstate);
+	free(outstate);
+	for(i=0;i<set->blocks_count;++i)
+		simple_enc_dealloc(genc[i]);
+	free(genc);
+	free(curreff);
 
 	stat.effort_anal=0;
 	for(i=0;i<set->blocks_count;++i)
 		stat.effort_anal+=set->blocks[i];
-	stat.effort_anal*=anal_runs;
+	stat.effort_anal*=iterations;
 	stat.effort_anal/=tot_samples;
 
 	stat.effort_output=1;
 	if(!set->diff_comp_settings)
 		stat.effort_anal=0;
-
-	qsort(set->blocks, set->blocks_count, sizeof(int), comp_int_asc);
 
 	stat.cpu_time=((double)(clock()-cstart))/CLOCKS_PER_SEC;
 	stat.time_anal=stat.cpu_time;
