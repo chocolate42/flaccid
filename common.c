@@ -47,7 +47,7 @@ void goodbye(char *s){
 FLAC__StaticEncoder *init_static_encoder(flac_settings *set, int blocksize, char *comp, char *apod){
 	FLAC__StaticEncoder *r;
 	r=FLAC__static_encoder_new();
-	r->is_variable_blocksize=set->blocksize_min!=set->blocksize_max;
+	r->is_variable_blocksize=set->mode==4?0:1;
 	if(set->lax)
 		FLAC__stream_encoder_set_streamable_subset(r->stream_encoder, false);
 	else if(blocksize>16384 || (set->sample_rate<=48000 && blocksize>4608))
