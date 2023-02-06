@@ -38,25 +38,8 @@ typedef struct{
 	size_t outsize;
 } stats;
 
-typedef struct flist flist;
-
-struct flist{
-	int is_outbuf_alloc, merge_tried;
-	uint8_t *outbuf;
-	size_t outbuf_size;
-	size_t blocksize;
-	uint64_t curr_sample;
-	flist *next, *prev;
-};
-
-int comp_int_asc(const void *aa, const void *bb);
-int comp_int_desc(const void *aa, const void *bb);
-void flist_initial_output_encode(flist *frame, flac_settings *set, void *input);
-void flist_write(flist *frame, flac_settings *set, void *input, size_t *outsize, FILE *fout);
-size_t fwrite_framestat(const void *ptr, size_t size, FILE *stream, uint32_t *minf, uint32_t *maxf);
 void goodbye(char *s);
 FLAC__StaticEncoder *init_static_encoder(flac_settings *set, int blocksize, char *comp, char *apod);
-void parse_blocksize_list(char *list, int **res, size_t *res_cnt);
 void print_settings(flac_settings *set);
 void print_stats(stats *stat);
 

@@ -39,82 +39,6 @@ void MD5_UpdateSamples(MD5_CTX *ctx, const void *input, size_t curr_sample, size
 	}
 }
 
-int comp_int_asc(const void *aa, const void *bb){
-	int *a=(int*)aa;
-	int *b=(int*)bb;
-	if(*a<*b)
-		return -1;
-	else
-		return *a==*b?0:1;
-}
-
-int comp_int_desc(const void *aa, const void *bb){
-	int *a=(int*)aa;
-	int *b=(int*)bb;
-	if(*a<*b)
-		return 1;
-	else
-		return *a==*b?0:-1;
-}
-
-void flist_initial_output_encode(flist *frame, flac_settings *set, void *input){
-	FLAC__StaticEncoder *enc;
-	flist *frame_curr;
-	void *tmpbuf;
-	for(frame_curr=frame;frame_curr;frame_curr=frame_curr->next){
-		if(set->diff_comp_settings){/*encode if settings different*/
-			enc=init_static_encoder(set, frame_curr->blocksize, set->comp_output, set->apod_output);
-			set->encode_func(enc,
-				input+(frame_curr->curr_sample*set->channels*(set->bps==16?2:4)),
-				frame_curr->blocksize,
-				frame_curr->curr_sample,
-				&tmpbuf,
-				&(frame_curr->outbuf_size)
-			);
-			frame_curr->outbuf=malloc(frame_curr->outbuf_size);
-			frame_curr->is_outbuf_alloc=1;
-			memcpy(frame_curr->outbuf, tmpbuf, frame_curr->outbuf_size);
-			FLAC__static_encoder_delete(enc);
-		}
-	}
-}
-
-void flist_write(flist *frame, flac_settings *set, void *input, size_t *outsize, FILE *fout){
-	FLAC__StaticEncoder *enc;
-	flist *frame_curr;
-	size_t comp;
-	for(frame_curr=frame;frame_curr;frame_curr=frame_curr->next){
-		if(!(frame_curr->outbuf)){//encode if not stored
-			enc=init_static_encoder(set, frame_curr->blocksize, set->comp_output, set->apod_output);
-			set->encode_func(enc,
-				input+(frame_curr->curr_sample*set->channels*(set->bps==16?2:4)),
-				frame_curr->blocksize,
-				frame_curr->curr_sample,
-				&(frame_curr->outbuf),
-				&(comp)
-			);
-			if(!set->diff_comp_settings)
-				assert(frame_curr->outbuf_size==comp);
-			(*outsize)+=fwrite_framestat(frame_curr->outbuf, frame_curr->outbuf_size, fout, &(set->minf), &(set->maxf));
-			FLAC__static_encoder_delete(enc);
-		}
-		else
-			(*outsize)+=fwrite_framestat(frame_curr->outbuf, frame_curr->outbuf_size, fout, &(set->minf), &(set->maxf));
-		if(set->blocksize_min>frame_curr->blocksize)
-			set->blocksize_min=frame_curr->blocksize;
-		if(set->blocksize_max<frame_curr->blocksize)
-			set->blocksize_max=frame_curr->blocksize;
-	}
-}
-
-size_t fwrite_framestat(const void *ptr, size_t size, FILE *stream, uint32_t *minf, uint32_t *maxf){
-	if(size<*minf)
-		*minf=size;
-	if(size>*maxf)
-		*maxf=size;
-	return fwrite(ptr, 1, size, stream);
-}
-
 void goodbye(char *s){
 	fprintf(stderr, "%s", s);
 	exit(1);
@@ -162,21 +86,6 @@ FLAC__StaticEncoder *init_static_encoder(flac_settings *set, int blocksize, char
 	return r;
 }
 
-void parse_blocksize_list(char *list, int **res, size_t *res_cnt){
-	char *cptr=list-1;
-	*res_cnt=0;
-	*res=NULL;
-	do{
-		*res=realloc(*res, sizeof(int)*(*res_cnt+1));
-		(*res)[*res_cnt]=atoi(cptr+1);
-		if((*res)[*res_cnt]<16)
-			goodbye("Error: Blocksize must be at least 16\n");
-		if((*res)[*res_cnt]>65535)
-			goodbye("Error: Blocksize must be at most 65535\n");
-		*res_cnt=*res_cnt+1;
-	}while((cptr=strchr(cptr+1, ',')));
-}
-
 void print_settings(flac_settings *set){
 	char *modes[]={"chunk", "gset", "peakset", "gasc", "fixed"};
 	int i;
@@ -200,7 +109,6 @@ void print_stats(stats *stat){
 	printf("\tsubtiming\tanalysis(%.5f);tweak(%.5f);merge(%.5f)", stat->time_anal, stat->time_tweak, stat->time_merge);
 	printf("\tsize\t%zu\tcpu_time\t%.5f\n", stat->outsize+42, stat->cpu_time);
 }
-
 
 static void simple_enc_encode(simple_enc *senc, flac_settings *set, void *input, uint32_t samples, uint64_t curr_sample, int is_anal, stats *stat){
 	assert(senc&&set&&input);
@@ -233,8 +141,7 @@ int simple_enc_eof(queue *q, simple_enc **senc, flac_settings *set, void *input,
 		}
 		return 1;
 	}
-	else
-		return 0;
+	return 0;
 }
 
 void simple_enc_dealloc(simple_enc *senc){
@@ -259,10 +166,8 @@ static size_t qmerge(queue *q, flac_settings *set, void *input, stats *stat, int
 		q->sq[i]=a;
 		return 1;
 	}
-	else{
-		simple_enc_dealloc(a);
-		return 0;
-	}
+	simple_enc_dealloc(a);
+	return 0;
 }
 
 static int senc_comp_merge(const void *aa, const void *bb){

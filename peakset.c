@@ -5,6 +5,13 @@
 #include <stdlib.h>
 #include <time.h>
 
+typedef struct flist flist;
+
+struct flist{
+	size_t blocksize;
+	flist *next, *prev;
+};
+
 int peak_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	int k, *outstate;
 	size_t effort=0, i, j, *step, step_count;
@@ -104,15 +111,9 @@ int peak_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 
 	/* traverse optimal result */
 	for(i=window_size;i>0;){
-		size_t frame_at=i-step[running_step[i]];
 		frame_curr=frame;
 		frame=malloc(sizeof(flist));
-		frame->is_outbuf_alloc=0;
-		frame->merge_tried=0;
-		frame->curr_sample=frame_at*set->blocksize_min;
 		frame->blocksize=set->blocks[running_step[i]];
-		frame->outbuf=NULL;
-		frame->outbuf_size=frame_results[(frame_at*step_count)+running_step[i]];
 		frame->next=frame_curr;
 		frame->prev=NULL;
 		if(frame_curr)

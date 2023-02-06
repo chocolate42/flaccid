@@ -83,6 +83,30 @@ char *help=
 	" * All apodization settings in a single semi-colon-delimited string\n"
 	" * ie tukey(0.5);partial_tukey(2);punchout_tukey(3)\n\n";
 
+static int comp_int_asc(const void *aa, const void *bb){
+	int *a=(int*)aa;
+	int *b=(int*)bb;
+	if(*a<*b)
+		return -1;
+	else
+		return *a==*b?0:1;
+}
+
+static void parse_blocksize_list(char *list, int **res, size_t *res_cnt){
+	char *cptr=list-1;
+	*res_cnt=0;
+	*res=NULL;
+	do{
+		*res=realloc(*res, sizeof(int)*(*res_cnt+1));
+		(*res)[*res_cnt]=atoi(cptr+1);
+		if((*res)[*res_cnt]<16)
+			goodbye("Error: Blocksize must be at least 16\n");
+		if((*res)[*res_cnt]>65535)
+			goodbye("Error: Blocksize must be at most 65535\n");
+		*res_cnt=*res_cnt+1;
+	}while((cptr=strchr(cptr+1, ',')));
+}
+
 int main(int argc, char *argv[]){
 	int (*encoder[6])(void*, size_t, FILE*, flac_settings*)={chunk_main, gset_main, peak_main, gasc_main, fixed_main, NULL};
 	char *ipath=NULL, *opath=NULL;
