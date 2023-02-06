@@ -201,14 +201,6 @@ void print_stats(stats *stat){
 	printf("\tsize\t%zu\tcpu_time\t%.5f\n", stat->outsize+42, stat->cpu_time);
 }
 
-static void queue_merge(queue *q, flac_settings *set, void *input, stats *stat);
-static void queue_tweak(queue *q, flac_settings *set, void *input, stats *stat);
-//single merge/tweak test
-static void qtweak(queue *q, flac_settings *set, void *input, stats *stat, int index, size_t newsplit, size_t *saved);
-static size_t qmerge(queue *q, flac_settings *set, void *input, stats *stat, int index, size_t *saved);
-static void simple_enc_encode(simple_enc *senc, flac_settings *set, void *input, uint32_t samples, uint64_t curr_sample, int is_anal, stats *stat);
-static void simple_enc_flush(queue *q, flac_settings *set, void *input, stats *stat, FILE *fout, int *outstate);
-static int senc_comp_merge(const void *aa, const void *bb);
 
 static void simple_enc_encode(simple_enc *senc, flac_settings *set, void *input, uint32_t samples, uint64_t curr_sample, int is_anal, stats *stat){
 	assert(senc&&set&&input);
@@ -248,67 +240,6 @@ int simple_enc_eof(queue *q, simple_enc **senc, flac_settings *set, void *input,
 void simple_enc_dealloc(simple_enc *senc){
 	FLAC__static_encoder_delete(senc->enc);
 	free(senc);
-}
-
-/*Flush queue to file*/
-static void simple_enc_flush(queue *q, flac_settings *set, void *input, stats *stat, FILE *fout, int *outstate){
-	size_t i;
-	if(!q->depth)
-		return;
-	if(set->merge)
-		queue_merge(q, set, input, stat);
-	if(set->tweak)
-		queue_tweak(q, set, input, stat);
-	if(set->diff_comp_settings){//encode with output settings if necessary
-		#pragma omp parallel for num_threads(set->work_count)
-		for(i=0;i<q->depth;++i){
-			outstate[omp_get_thread_num()]+=set->outperc;
-			simple_enc_encode(q->sq[i], set, input, q->sq[i]->sample_cnt, q->sq[i]->curr_sample, (*outstate>=100)?0:2, stat);
-			outstate[omp_get_thread_num()]%=100;
-		}
-		#pragma omp barrier
-	}
-	for(i=0;i<q->depth;++i){//dump to file
-		if(q->sq[i]->outbuf_size<set->minf)
-			set->minf=q->sq[i]->outbuf_size;
-		if(q->sq[i]->outbuf_size>set->maxf)
-			set->maxf=q->sq[i]->outbuf_size;
-		if(q->sq[i]->sample_cnt<set->blocksize_min)
-			set->blocksize_min=q->sq[i]->sample_cnt;
-		if(q->sq[i]->sample_cnt>set->blocksize_max)
-			set->blocksize_max=q->sq[i]->sample_cnt;
-		stat->outsize+=fwrite(q->sq[i]->outbuf, 1, q->sq[i]->outbuf_size, fout);
-	}
-	q->depth=0;//reset
-}
-
-/*Add analysed+chosen frame to output queue. Swap out simple_enc instance to an unused one, queue takes control of senc*/
-simple_enc* simple_enc_out(queue *q, simple_enc *senc, flac_settings *set, void *input, uint64_t *curr_sample, stats *stat, FILE *fout, int *outstate){
-	simple_enc *ret;
-	if(q->depth==set->queue_size)
-		simple_enc_flush(q, set, input, stat, fout, outstate);
-	(*curr_sample)+=senc->sample_cnt;
-	ret=q->sq[q->depth];
-	q->sq[q->depth++]=senc;
-	return ret;
-}
-
-void queue_alloc(queue *q, flac_settings *set){
-	size_t i;
-	assert(set->queue_size>0);
-	q->depth=0;
-	q->sq=calloc(set->queue_size, sizeof(simple_enc*));
-	for(i=0;i<set->queue_size;++i)
-		q->sq[i]=calloc(1, sizeof(simple_enc));
-}
-
-void queue_dealloc(queue *q, flac_settings *set, void *input, stats *stat, FILE *fout, int *outstate){
-	size_t i;
-	simple_enc_flush(q, set, input, stat, fout, outstate);
-	for(i=0;i<set->queue_size;++i)
-		simple_enc_dealloc(q->sq[i]);
-	free(q->sq);
-	q->sq=NULL;
 }
 
 static size_t qmerge(queue *q, flac_settings *set, void *input, stats *stat, int i, size_t *saved){
@@ -443,4 +374,65 @@ static void queue_tweak(queue *q, flac_settings *set, void *input, stats *stat){
 			fprintf(stderr, "tweak(%zu) saved %zu bytes\n", ind, saved_tot);
 	}while(saved_tot>=set->tweak);
 	free(saved);
+}
+
+/*Flush queue to file*/
+static void simple_enc_flush(queue *q, flac_settings *set, void *input, stats *stat, FILE *fout, int *outstate){
+	size_t i;
+	if(!q->depth)
+		return;
+	if(set->merge)
+		queue_merge(q, set, input, stat);
+	if(set->tweak)
+		queue_tweak(q, set, input, stat);
+	if(set->diff_comp_settings){//encode with output settings if necessary
+		#pragma omp parallel for num_threads(set->work_count)
+		for(i=0;i<q->depth;++i){
+			outstate[omp_get_thread_num()]+=set->outperc;
+			simple_enc_encode(q->sq[i], set, input, q->sq[i]->sample_cnt, q->sq[i]->curr_sample, (*outstate>=100)?0:2, stat);
+			outstate[omp_get_thread_num()]%=100;
+		}
+		#pragma omp barrier
+	}
+	for(i=0;i<q->depth;++i){//dump to file
+		if(q->sq[i]->outbuf_size<set->minf)
+			set->minf=q->sq[i]->outbuf_size;
+		if(q->sq[i]->outbuf_size>set->maxf)
+			set->maxf=q->sq[i]->outbuf_size;
+		if(q->sq[i]->sample_cnt<set->blocksize_min)
+			set->blocksize_min=q->sq[i]->sample_cnt;
+		if(q->sq[i]->sample_cnt>set->blocksize_max)
+			set->blocksize_max=q->sq[i]->sample_cnt;
+		stat->outsize+=fwrite(q->sq[i]->outbuf, 1, q->sq[i]->outbuf_size, fout);
+	}
+	q->depth=0;//reset
+}
+
+/*Add analysed+chosen frame to output queue. Swap out simple_enc instance to an unused one, queue takes control of senc*/
+simple_enc* simple_enc_out(queue *q, simple_enc *senc, flac_settings *set, void *input, uint64_t *curr_sample, stats *stat, FILE *fout, int *outstate){
+	simple_enc *ret;
+	if(q->depth==set->queue_size)
+		simple_enc_flush(q, set, input, stat, fout, outstate);
+	(*curr_sample)+=senc->sample_cnt;
+	ret=q->sq[q->depth];
+	q->sq[q->depth++]=senc;
+	return ret;
+}
+
+void queue_alloc(queue *q, flac_settings *set){
+	size_t i;
+	assert(set->queue_size>0);
+	q->depth=0;
+	q->sq=calloc(set->queue_size, sizeof(simple_enc*));
+	for(i=0;i<set->queue_size;++i)
+		q->sq[i]=calloc(1, sizeof(simple_enc));
+}
+
+void queue_dealloc(queue *q, flac_settings *set, void *input, stats *stat, FILE *fout, int *outstate){
+	size_t i;
+	simple_enc_flush(q, set, input, stat, fout, outstate);
+	for(i=0;i<set->queue_size;++i)
+		simple_enc_dealloc(q->sq[i]);
+	free(q->sq);
+	q->sq=NULL;
 }
