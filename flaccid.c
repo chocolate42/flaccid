@@ -126,7 +126,6 @@ int main(int argc, char *argv[]){
 
 	uint64_t tot_samples;
 	flac_settings set;
-	static int lax=0;
 	char *blocklist_str="1152,2304,4608";
 
 	int c, option_index;
@@ -138,7 +137,7 @@ int main(int argc, char *argv[]){
 		{"blocksize-limit-upper",	required_argument, 0, 264},
 		{"help", no_argument, 0, 'h'},
 		{"in", required_argument, 0, 'i'},
-		{"lax", no_argument, &lax, 1},
+		{"lax", no_argument, 0, 272},
 		{"merge",	required_argument, 0, 265},
 		{"mode", required_argument, 0, 'm'},
 		{"no-md5", no_argument, 0, 271},
@@ -170,7 +169,8 @@ int main(int argc, char *argv[]){
 	set.comp_output="8p";
 	set.comp_outputalt="8";
 	set.diff_comp_settings=0;
-	set.merge=4096;
+	set.lax=0;
+	set.merge=0;
 	set.minf=UINT32_MAX;
 	set.maxf=0;
 	set.md5=1;
@@ -178,8 +178,11 @@ int main(int argc, char *argv[]){
 	set.outperc=100;
 	set.queue_size=8192;
 	set.sample_rate=44100;
+	set.tweak=0;
 	set.wildcard=0;
 	set.work_count=1;
+	set.lpc_order_limit=32;
+	set.rice_order_limit=15;
 
 	while (1){
 		if(-1==(c=getopt_long(argc, argv, "hi:m:o:w:", long_options, &option_index)))
@@ -283,7 +286,7 @@ int main(int argc, char *argv[]){
 				if(atoi(optarg)<1 || atoi(optarg)>100)
 					goodbye("Error: Invalid --outperc setting (must be in integer between 1 and 100 inclusive)\n");
 				break;
-			
+
 			case 270:
 				set.queue_size=atoi(optarg);
 				if(set.queue_size<=0)
@@ -294,19 +297,15 @@ int main(int argc, char *argv[]){
 				set.md5=0;
 				break;
 
+			case 272:
+				set.lax=1;
+				break;
+
 			case '?':
 				goodbye("");
 				break;
 		}
 	}
-	set.lax=lax;
-	if(!set.lax && set.blocksize_limit_upper>4608)
-		set.blocksize_limit_upper=4608;//<=48KHz assumed fix TODO
-
-	set.diff_comp_settings=strcmp(set.comp_anal, set.comp_output)!=0;
-	set.diff_comp_settings=set.diff_comp_settings?set.diff_comp_settings:(set.apod_anal && !set.apod_output);
-	set.diff_comp_settings=set.diff_comp_settings?set.diff_comp_settings:(!set.apod_anal && set.apod_output);
-	set.diff_comp_settings=set.diff_comp_settings?set.diff_comp_settings:(set.apod_anal && set.apod_output && strcmp(set.apod_anal, set.apod_output)!=0);
 
 	if(!ipath)
 		goodbye("Error: No input\n");
@@ -327,6 +326,22 @@ int main(int argc, char *argv[]){
 	fwrite(header, 1, 42, fout);
 
 	input=load_input(ipath, &input_size, &set);
+
+	if(!set.lax){
+		set.blocksize_limit_upper=(set.sample_rate<=48000)?4608:16384;
+		if(set.sample_rate<=48000)
+			set.lpc_order_limit=12;
+		set.rice_order_limit=8;
+	}
+
+	if(!set.lax && set.blocksize_limit_upper>4608)
+		set.blocksize_limit_upper=4608;//<=48KHz assumed fix TODO
+
+
+	set.diff_comp_settings=strcmp(set.comp_anal, set.comp_output)!=0;
+	set.diff_comp_settings=set.diff_comp_settings?set.diff_comp_settings:(set.apod_anal && !set.apod_output);
+	set.diff_comp_settings=set.diff_comp_settings?set.diff_comp_settings:(!set.apod_anal && set.apod_output);
+	set.diff_comp_settings=set.diff_comp_settings?set.diff_comp_settings:(set.apod_anal && set.apod_output && strcmp(set.apod_anal, set.apod_output)!=0);
 
 	tot_samples=input_size/(set.channels*(set.bps==16?2:4));
 

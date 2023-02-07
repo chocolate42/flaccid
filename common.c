@@ -60,7 +60,7 @@ FLAC__StaticEncoder *init_static_encoder(flac_settings *set, int blocksize, char
 	if(strchr(comp, 'e'))
 		FLAC__stream_encoder_set_do_exhaustive_model_search(r->stream_encoder, true);
 	if(strchr(comp, 'l'))
-		FLAC__stream_encoder_set_max_lpc_order(r->stream_encoder, atoi(strchr(comp, 'l')+1));
+		FLAC__stream_encoder_set_max_lpc_order(r->stream_encoder, (atoi(strchr(comp, 'l')+1)<=set->lpc_order_limit)?atoi(strchr(comp, 'l')+1):set->lpc_order_limit);
 	if(strchr(comp, 'm'))
 		FLAC__stream_encoder_set_do_mid_side_stereo(r->stream_encoder, true);
 	if(strchr(comp, 'p'))
@@ -68,11 +68,11 @@ FLAC__StaticEncoder *init_static_encoder(flac_settings *set, int blocksize, char
 	if(strchr(comp, 'q'))
 		FLAC__stream_encoder_set_qlp_coeff_precision(r->stream_encoder, atoi(strchr(comp, 'q')+1));
 	if(strchr(comp, 'r')&&strchr(comp, ',')){
-		FLAC__stream_encoder_set_min_residual_partition_order(r->stream_encoder, atoi(strchr(comp, 'r')+1));
-		FLAC__stream_encoder_set_max_residual_partition_order(r->stream_encoder, atoi(strchr(comp, ',')+1));
+		FLAC__stream_encoder_set_min_residual_partition_order(r->stream_encoder, (atoi(strchr(comp, 'r')+1)<=set->rice_order_limit)?atoi(strchr(comp, 'r')+1):set->rice_order_limit);
+		FLAC__stream_encoder_set_max_residual_partition_order(r->stream_encoder, (atoi(strchr(comp, ',')+1)<=set->rice_order_limit)?atoi(strchr(comp, ',')+1):set->rice_order_limit);
 	}
 	else if(strchr(comp, 'r'))
-		FLAC__stream_encoder_set_max_residual_partition_order(r->stream_encoder, atoi(strchr(comp, 'r')+1));
+		FLAC__stream_encoder_set_max_residual_partition_order(r->stream_encoder, (atoi(strchr(comp, 'r')+1)<=set->rice_order_limit)?atoi(strchr(comp, 'r')+1):set->rice_order_limit);
 
 	if(apod)
 		FLAC__stream_encoder_set_apodization(r->stream_encoder, apod);
