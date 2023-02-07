@@ -131,13 +131,13 @@ void simple_enc_analyse(simple_enc *senc, flac_settings *set, void *input, uint3
 		MD5_UpdateSamples(ctx, input, curr_sample, samples, set);
 }
 
-int simple_enc_eof(queue *q, simple_enc **senc, flac_settings *set, void *input, uint64_t *curr_sample, uint64_t tot_samples, uint64_t threshold, stats *stat, MD5_CTX *ctx, FILE *fout, int *outstate){
+int simple_enc_eof(queue *q, simple_enc **senc, flac_settings *set, void *input, uint64_t *curr_sample, uint64_t tot_samples, uint64_t threshold, stats *stat, MD5_CTX *ctx, FILE *fout){
 	if((tot_samples-*curr_sample)<threshold){//EOF
 		if(tot_samples-*curr_sample){
 			if(ctx && set->md5)
 				MD5_UpdateSamples(ctx, input, *curr_sample, tot_samples-*curr_sample, set);
 			simple_enc_encode(*senc, set, input, tot_samples-*curr_sample, *curr_sample, 1, stat);//do analysis just to treat final frame the same as the rest
-			*senc=simple_enc_out(q, *senc, set, input, curr_sample, stat, fout, outstate);//just add to queue, let analysis implementation flush when it deallocates queue
+			*senc=simple_enc_out(q, *senc, set, input, curr_sample, stat, fout);//just add to queue, let analysis implementation flush when it deallocates queue
 		}
 		return 1;
 	}
@@ -282,7 +282,7 @@ static void queue_tweak(queue *q, flac_settings *set, void *input, stats *stat){
 }
 
 /*Flush queue to file*/
-static void simple_enc_flush(queue *q, flac_settings *set, void *input, stats *stat, FILE *fout, int *outstate){
+static void simple_enc_flush(queue *q, flac_settings *set, void *input, stats *stat, FILE *fout){
 	size_t i;
 	if(!q->depth)
 		return;
@@ -293,9 +293,9 @@ static void simple_enc_flush(queue *q, flac_settings *set, void *input, stats *s
 	if(set->diff_comp_settings){//encode with output settings if necessary
 		#pragma omp parallel for num_threads(set->work_count)
 		for(i=0;i<q->depth;++i){
-			outstate[omp_get_thread_num()]+=set->outperc;
-			simple_enc_encode(q->sq[i], set, input, q->sq[i]->sample_cnt, q->sq[i]->curr_sample, (*outstate>=100)?0:2, stat);
-			outstate[omp_get_thread_num()]%=100;
+			q->outstate[omp_get_thread_num()]+=set->outperc;
+			simple_enc_encode(q->sq[i], set, input, q->sq[i]->sample_cnt, q->sq[i]->curr_sample, (q->outstate[omp_get_thread_num()]>=100)?0:2, stat);
+			q->outstate[omp_get_thread_num()]%=100;
 		}
 		#pragma omp barrier
 	}
@@ -314,10 +314,10 @@ static void simple_enc_flush(queue *q, flac_settings *set, void *input, stats *s
 }
 
 /*Add analysed+chosen frame to output queue. Swap out simple_enc instance to an unused one, queue takes control of senc*/
-simple_enc* simple_enc_out(queue *q, simple_enc *senc, flac_settings *set, void *input, uint64_t *curr_sample, stats *stat, FILE *fout, int *outstate){
+simple_enc* simple_enc_out(queue *q, simple_enc *senc, flac_settings *set, void *input, uint64_t *curr_sample, stats *stat, FILE *fout){
 	simple_enc *ret;
 	if(q->depth==set->queue_size)
-		simple_enc_flush(q, set, input, stat, fout, outstate);
+		simple_enc_flush(q, set, input, stat, fout);
 	(*curr_sample)+=senc->sample_cnt;
 	ret=q->sq[q->depth];
 	q->sq[q->depth++]=senc;
@@ -331,13 +331,16 @@ void queue_alloc(queue *q, flac_settings *set){
 	q->sq=calloc(set->queue_size, sizeof(simple_enc*));
 	for(i=0;i<set->queue_size;++i)
 		q->sq[i]=calloc(1, sizeof(simple_enc));
+	q->outstate=calloc(set->work_count, sizeof(int));
 }
 
-void queue_dealloc(queue *q, flac_settings *set, void *input, stats *stat, FILE *fout, int *outstate){
+void queue_dealloc(queue *q, flac_settings *set, void *input, stats *stat, FILE *fout){
 	size_t i;
-	simple_enc_flush(q, set, input, stat, fout, outstate);
+	simple_enc_flush(q, set, input, stat, fout);
 	for(i=0;i<set->queue_size;++i)
 		simple_enc_dealloc(q->sq[i]);
 	free(q->sq);
 	q->sq=NULL;
+	free(q->outstate);
+	q->outstate=NULL;
 }

@@ -13,7 +13,7 @@ struct flist{
 };
 
 int peak_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
-	int k, *outstate;
+	int k;
 	size_t effort=0, i, j, *step, step_count;
 	size_t *frame_results, *running_results;
 	uint8_t *running_step;
@@ -128,21 +128,19 @@ int peak_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	set->diff_comp_settings=set->diff_comp_settings?1:2;//hack as analysis not stored
 	a=calloc(1, sizeof(simple_enc));
 	queue_alloc(&q, set);
-	outstate=calloc(set->work_count, sizeof(int));
 	for(frame_curr=frame;frame_curr;frame_curr=frame_curr->next){
 		a->sample_cnt=frame_curr->blocksize;
 		assert(a->sample_cnt);
 		a->curr_sample=curr_sample;
-		a=simple_enc_out(&q, a, set, input, &curr_sample, &stat, fout, outstate);
+		a=simple_enc_out(&q, a, set, input, &curr_sample, &stat, fout);
 	}
 	if(curr_sample!=tot_samples){//partial
 		a->sample_cnt=tot_samples-curr_sample;
 		a->curr_sample=curr_sample;
-		a=simple_enc_out(&q, a, set, input, &curr_sample, &stat, fout, outstate);
+		a=simple_enc_out(&q, a, set, input, &curr_sample, &stat, fout);
 	}
-	queue_dealloc(&q, set, input, &stat, fout, outstate);
+	queue_dealloc(&q, set, input, &stat, fout);
 	simple_enc_dealloc(a);
-	free(outstate);
 	set->diff_comp_settings=set->diff_comp_settings==2?0:1;//reverse hack just in case
 
 	if(set->md5)

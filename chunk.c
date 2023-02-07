@@ -46,20 +46,20 @@ static size_t chunk_analyse(chenc *c){
 }
 
 // Write best combination of frames in correct order
-static void chunk_write(chenc *c, queue *q, flac_settings *set, void *input, uint64_t *curr_sample, stats *stat, FILE *fout, int *outstate){
+static void chunk_write(chenc *c, queue *q, flac_settings *set, void *input, uint64_t *curr_sample, stats *stat, FILE *fout){
 	if(c->use_this)
-		c->enc=simple_enc_out(q, c->enc, set, input, curr_sample, stat, fout, outstate);
+		c->enc=simple_enc_out(q, c->enc, set, input, curr_sample, stat, fout);
 	else{
 		if(c->l)
-			chunk_write(c->l, q, set, input, curr_sample, stat, fout, outstate);
+			chunk_write(c->l, q, set, input, curr_sample, stat, fout);
 		if(c->r)
-			chunk_write(c->r, q, set, input, curr_sample, stat, fout, outstate);
+			chunk_write(c->r, q, set, input, curr_sample, stat, fout);
 	}
 }
 
 int chunk_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	//input thread variables
-	int i, *outstate;
+	int i;
 	MD5_CTX ctx;
 	size_t curr_sample=0, tot_samples=input_size/(set->channels*(set->bps==16?2:4)), encoder_cnt=2;
 	size_t child_index, parent_index, curr_blocksize, curr_offset;
@@ -109,18 +109,16 @@ int chunk_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 		MD5_Init(&ctx);
 	cstart=clock();
 	queue_alloc(&q, set);
-	outstate=calloc(set->work_count, sizeof(int));
-	while(!simple_enc_eof(&q, &(encoder[0].enc), set, input, &curr_sample, tot_samples, set->blocks[set->blocks_count-1], &stat, &ctx, fout, outstate)){//if enough input, chunk
+	while(!simple_enc_eof(&q, &(encoder[0].enc), set, input, &curr_sample, tot_samples, set->blocks[set->blocks_count-1], &stat, &ctx, fout)){//if enough input, chunk
 		#pragma omp parallel for num_threads(set->work_count)
 		for(i=0;i<encoder_cnt;++i){//encode using array for easy multithreading
 			simple_enc_analyse(encoder[i].enc, set, input, encoder[i].blocksize, curr_sample+encoder[i].offset, &stat, i?NULL:&ctx);
 		}
 		#pragma omp barrier
 		chunk_analyse(encoder);
-		chunk_write(encoder, &q, set, input, &curr_sample, &stat, fout, outstate);
+		chunk_write(encoder, &q, set, input, &curr_sample, &stat, fout);
 	}
-	queue_dealloc(&q, set, input, &stat, fout, outstate);
-	free(outstate);
+	queue_dealloc(&q, set, input, &stat, fout);
 	for(i=0;i<encoder_cnt;++i)
 		simple_enc_dealloc(encoder[i].enc);
 	free(encoder);

@@ -6,7 +6,6 @@
 #include <time.h>
 
 int gset_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
-	int *outstate;
 	uint64_t curr_sample, tot_samples=input_size/(set->channels*(set->bps==16?2:4));
 	MD5_CTX ctx;
 	stats stat={0};
@@ -19,7 +18,6 @@ int gset_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	cstart=clock();
 	if(set->md5)
 		MD5_Init(&ctx);
-	outstate=calloc(set->work_count, sizeof(int));
 	queue_alloc(&q, set);
 
 	genc=malloc(sizeof(simple_enc*)*set->blocks_count);
@@ -50,19 +48,18 @@ int gset_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 		}
 		if(best==set->blocks_count){//partial end frame
 				simple_enc_analyse(genc[0], set, input, tot_samples-curr_sample, curr_sample, &stat, &ctx);
-				genc[0]=simple_enc_out(&q, genc[0], set, input, &curr_sample, &stat, fout, outstate);
+				genc[0]=simple_enc_out(&q, genc[0], set, input, &curr_sample, &stat, fout);
 		}
 		else{
 			if(set->md5)
 				MD5_UpdateSamples(&ctx, input, curr_sample, set->blocks[best], set);
-			genc[best]=simple_enc_out(&q, genc[best], set, input, &curr_sample, &stat, fout, outstate);
+			genc[best]=simple_enc_out(&q, genc[best], set, input, &curr_sample, &stat, fout);
 		}
 		++iterations;
 	}
 	if(set->md5)
 		MD5_Final(set->hash, &ctx);
-	queue_dealloc(&q, set, input, &stat, fout, outstate);
-	free(outstate);
+	queue_dealloc(&q, set, input, &stat, fout);
 	for(i=0;i<set->blocks_count;++i)
 		simple_enc_dealloc(genc[i]);
 	free(genc);

@@ -8,7 +8,6 @@ int fixed_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	FLAC__StaticEncoder *partial;
 	void *partial_out;
 	size_t partial_outsize;
-	int *outstate;
 	MD5_CTX ctx;
 	uint64_t curr_sample=0, tot_samples=input_size/(set->channels*(set->bps==16?2:4));
 	stats stat={0};
@@ -34,17 +33,15 @@ int fixed_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	set->diff_comp_settings=set->diff_comp_settings?1:2;
 	a=calloc(1, sizeof(simple_enc));
 	queue_alloc(&q, set);
-	outstate=calloc(set->work_count, sizeof(int));
 	while((curr_sample+set->blocksize_min)<=tot_samples){
 		a->sample_cnt=set->blocksize_min;
 		a->curr_sample=curr_sample;
 		if(set->md5)
 			MD5_UpdateSamples(&ctx, input, curr_sample, a->sample_cnt, set);
-		a=simple_enc_out(&q, a, set, input, &curr_sample, &stat, fout, outstate);
+		a=simple_enc_out(&q, a, set, input, &curr_sample, &stat, fout);
 	}
-	queue_dealloc(&q, set, input, &stat, fout, outstate);
+	queue_dealloc(&q, set, input, &stat, fout);
 	simple_enc_dealloc(a);
-	free(outstate);
 	set->diff_comp_settings=set->diff_comp_settings==2?0:1;//reverse hack just in case
 
 	if(curr_sample!=tot_samples){/*partial*/
