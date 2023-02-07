@@ -35,8 +35,6 @@ int peak_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 
 	if(set->blocks_count==1)
 		goodbye("Error: At least two blocksizes must be available\n");
-	if(set->blocks_count>255)
-		goodbye("Error: Implementation limited to up to 255 blocksizes. This is also just an insane heat-death-of-the-universe setting\n");
 
 	for(i=1;i<set->blocks_count;++i){
 		if(set->blocks[i]%set->blocks[0])

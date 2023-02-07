@@ -81,5 +81,4 @@ Return a fresh context as the queue has taken the old one
 Advance curr_sample value*/
 simple_enc *simple_enc_out(queue *q, simple_enc *senc, flac_settings *set, void *input, uint64_t *curr_sample, stats *stat, FILE *fout);
 
-
 #endif
