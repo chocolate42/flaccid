@@ -219,15 +219,14 @@ static void queue_merge(queue *q, flac_settings *set, void *input, stats *stat){
 
 static void qtweak(queue *q, flac_settings *set, void *input, stats *stat, int i, size_t newsplit, size_t *saved){
 	simple_enc *a, *b;
-	size_t bsize=(q->sq[i]->sample_cnt+q->sq[i+1]->sample_cnt)-newsplit;
+	size_t bsize, tot=q->sq[i]->sample_cnt+q->sq[i+1]->sample_cnt;
 
-	if(newsplit<16 || bsize<16)
+	if(newsplit<16 || newsplit>=(tot-16))
 		return;
 	if(newsplit>set->blocksize_limit_upper || newsplit<set->blocksize_limit_lower)
 		return;
+	bsize=tot-newsplit;
 	if(bsize>set->blocksize_limit_upper || bsize<set->blocksize_limit_lower)
-		return;
-	if(newsplit>=(q->sq[i]->sample_cnt+q->sq[i+1]->sample_cnt))
 		return;
 
 	a=calloc(1, sizeof(simple_enc));
@@ -235,7 +234,7 @@ static void qtweak(queue *q, flac_settings *set, void *input, stats *stat, int i
 	simple_enc_analyse(a, set, input, newsplit, q->sq[i]->curr_sample, stat, NULL);
 	simple_enc_analyse(b, set, input, bsize, q->sq[i]->curr_sample+newsplit, stat, NULL);
 	if((a->outbuf_size+b->outbuf_size)<(q->sq[i]->outbuf_size+q->sq[i+1]->outbuf_size)){
-		(*saved)+=(q->sq[i]->outbuf_size+q->sq[i+1]->outbuf_size) - (a->outbuf_size+b->outbuf_size);
+		(*saved)+=((q->sq[i]->outbuf_size+q->sq[i+1]->outbuf_size) - (a->outbuf_size+b->outbuf_size));
 		simple_enc_dealloc(q->sq[i]);
 		simple_enc_dealloc(q->sq[i+1]);
 		q->sq[i]=a;
@@ -249,36 +248,36 @@ static void qtweak(queue *q, flac_settings *set, void *input, stats *stat, int i
 
 /*Do tweak passes on queue*/
 static void queue_tweak(queue *q, flac_settings *set, void *input, stats *stat){
-	size_t i, ind=0, *saved, saved_tot;
+	size_t i, ind=0, saved_tot;
 	if(!set->tweak)
 		return;
-	saved=calloc(set->work_count, sizeof(size_t));
 	do{
+		for(i=0;i<set->work_count;++i)
+			q->saved[i]=0;
 
 		#pragma omp parallel for num_threads(set->work_count)
 		for(i=0;i<q->depth/2;++i){//even pairs
-			qtweak(q, set, input, stat, 2*i, q->sq[2*i]->sample_cnt-(set->blocksize_min/(ind+2)), &saved[omp_get_thread_num()]);
-			qtweak(q, set, input, stat, 2*i, q->sq[2*i]->sample_cnt+(set->blocksize_min/(ind+2)), &saved[omp_get_thread_num()]);
+			size_t pivot=q->sq[2*i]->sample_cnt;
+			qtweak(q, set, input, stat, 2*i, pivot-(set->blocks[0]/(ind+2)), &(q->saved[omp_get_thread_num()]));
+			qtweak(q, set, input, stat, 2*i, pivot+(set->blocks[0]/(ind+2)), &(q->saved[omp_get_thread_num()]));
 		}
 		#pragma omp barrier
 
 		#pragma omp parallel for num_threads(set->work_count)
 		for(i=0;i<(q->depth-1)/2;++i){//odd pairs
-			qtweak(q, set, input, stat, (2*i)+1, q->sq[(2*i)+1]->sample_cnt-(set->blocksize_min/(ind+2)), &saved[omp_get_thread_num()]);
-			qtweak(q, set, input, stat, (2*i)+1, q->sq[(2*i)+1]->sample_cnt+(set->blocksize_min/(ind+2)), &saved[omp_get_thread_num()]);
+			size_t pivot=q->sq[(2*i)+1]->sample_cnt;
+			qtweak(q, set, input, stat, (2*i)+1, pivot-(set->blocks[0]/(ind+2)), &(q->saved[omp_get_thread_num()]));
+			qtweak(q, set, input, stat, (2*i)+1, pivot+(set->blocks[0]/(ind+2)), &(q->saved[omp_get_thread_num()]));
 		}
 		#pragma omp barrier
 
 		saved_tot=0;
-		for(i=0;i<set->work_count;++i){
-			saved_tot+=saved[i];
-			saved[i]=0;
-		}
+		for(i=0;i<set->work_count;++i)
+			saved_tot+=q->saved[i];
 		++ind;
 		if(saved_tot)
 			fprintf(stderr, "tweak(%zu) saved %zu bytes\n", ind, saved_tot);
 	}while(saved_tot>=set->tweak);
-	free(saved);
 }
 
 /*Flush queue to file*/
@@ -332,6 +331,7 @@ void queue_alloc(queue *q, flac_settings *set){
 	for(i=0;i<set->queue_size;++i)
 		q->sq[i]=calloc(1, sizeof(simple_enc));
 	q->outstate=calloc(set->work_count, sizeof(int));
+	q->saved=calloc(set->work_count, sizeof(size_t));
 }
 
 void queue_dealloc(queue *q, flac_settings *set, void *input, stats *stat, FILE *fout){
@@ -343,4 +343,6 @@ void queue_dealloc(queue *q, flac_settings *set, void *input, stats *stat, FILE 
 	q->sq=NULL;
 	free(q->outstate);
 	q->outstate=NULL;
+	free(q->saved);
+	q->saved=NULL;
 }

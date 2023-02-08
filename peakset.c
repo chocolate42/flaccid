@@ -8,7 +8,7 @@
 typedef struct flist flist;
 
 struct flist{
-	size_t blocksize;
+	size_t blocksize, outbuf_size;
 	flist *next, *prev;
 };
 
@@ -20,6 +20,7 @@ int peak_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	size_t window_size, window_size_check=0;
 	size_t tot_samples=input_size/(set->channels*(set->bps==16?2:4));
 	size_t print_effort=0;
+	size_t frame_at;
 	flist *frame=NULL, *frame_curr;
 	peak_hunter *work;
 	clock_t cstart, cstart_sub;
@@ -109,11 +110,13 @@ int peak_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 
 	/* traverse optimal result */
 	for(i=window_size;i>0;){
+		frame_at=i-step[running_step[i]];
 		frame_curr=frame;
 		frame=malloc(sizeof(flist));
 		frame->blocksize=set->blocks[running_step[i]];
 		frame->next=frame_curr;
 		frame->prev=NULL;
+		frame->outbuf_size=frame_results[(frame_at*step_count)+running_step[i]];
 		if(frame_curr)
 			frame_curr->prev=frame;
 		window_size_check+=step[running_step[i]];
@@ -130,6 +133,7 @@ int peak_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 		a->sample_cnt=frame_curr->blocksize;
 		assert(a->sample_cnt);
 		a->curr_sample=curr_sample;
+		a->outbuf_size=frame_curr->outbuf_size;
 		a=simple_enc_out(&q, a, set, input, &curr_sample, &stat, fout);
 	}
 	if(curr_sample!=tot_samples){//partial

@@ -56,6 +56,7 @@ typedef struct{
 	simple_enc **sq;
 	size_t depth;
 	int *outstate;
+	size_t *saved;
 } queue;
 
 /*allocate the queue*/
