@@ -1,9 +1,7 @@
 #include "gset.h"
 
 #include <assert.h>
-#include <omp.h>
 #include <stdlib.h>
-#include <time.h>
 
 int gset_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	uint64_t curr_sample, tot_samples=input_size/(set->channels*(set->bps==16?2:4));
@@ -15,10 +13,7 @@ int gset_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	size_t best, iterations=0, i;
 	queue q;
 
-	cstart=clock();
-	if(set->md5)
-		MD5_Init(&ctx);
-	queue_alloc(&q, set);
+	mode_boilerplate_init(set, &cstart, &ctx, &q);
 
 	genc=malloc(sizeof(simple_enc*)*set->blocks_count);
 	for(i=0;i<set->blocks_count;++i)

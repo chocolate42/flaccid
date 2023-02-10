@@ -1,10 +1,8 @@
 #include "chunk.h"
 
 #include <assert.h>
-#include <omp.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 
 typedef struct chenc chenc;
 
@@ -77,6 +75,8 @@ int chunk_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	--encoder_cnt;
 	encoder=calloc(encoder_cnt, sizeof(chenc));
 
+	mode_boilerplate_init(set, &cstart, &ctx, &q);
+
 	//build working data
 	parent_index=0;
 	child_index=1;
@@ -95,7 +95,7 @@ int chunk_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	}
 	{
 		curr_offset=0;
-		for(;parent_index!=encoder_cnt;++parent_index){
+		for(;parent_index<encoder_cnt;++parent_index){
 			encoder[parent_index].enc=calloc(1, sizeof(simple_enc));
 			encoder[parent_index].l=NULL;
 			encoder[parent_index].r=NULL;
@@ -105,10 +105,6 @@ int chunk_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 		}
 	}
 
-	if(set->md5)
-		MD5_Init(&ctx);
-	cstart=clock();
-	queue_alloc(&q, set);
 	while(!simple_enc_eof(&q, &(encoder[0].enc), set, input, &curr_sample, tot_samples, set->blocks[set->blocks_count-1], &stat, &ctx, fout)){//if enough input, chunk
 		#pragma omp parallel for num_threads(set->work_count)
 		for(i=0;i<encoder_cnt;++i){//encode using array for easy multithreading

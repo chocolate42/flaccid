@@ -6,6 +6,7 @@
 
 #include <inttypes.h>
 #include <omp.h>
+#include <time.h>
 
 #ifdef USE_OPENSSL
 #include <openssl/md5.h>
@@ -81,5 +82,7 @@ Otherwise, redo frame encode using output settings and add to queue
 Return a fresh context as the queue has taken the old one
 Advance curr_sample value*/
 simple_enc *simple_enc_out(queue *q, simple_enc *senc, flac_settings *set, void *input, uint64_t *curr_sample, stats *stat, FILE *fout);
+
+void mode_boilerplate_init(flac_settings *set, clock_t *cstart, MD5_CTX *ctx, queue *q);
 
 #endif

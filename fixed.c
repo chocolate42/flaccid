@@ -2,7 +2,6 @@
 
 #include <assert.h>
 #include <stdlib.h>
-#include <time.h>
 
 int fixed_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	FLAC__StaticEncoder *partial;
@@ -24,15 +23,12 @@ int fixed_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	if(set->diff_comp_settings)
 		goodbye("Error: Fixed blocking strategy cannot have different comp settings\n");
 
-	if(set->md5)
-		MD5_Init(&ctx);
-	cstart=clock();
+	mode_boilerplate_init(set, &cstart, &ctx, &q);
 
 	/*Instead of reimplementing a multithreaded output queue here, hack simple_enc to do it.
 	By faking analysis frames we can add to output queue and rely on existing code*/
 	set->diff_comp_settings=set->diff_comp_settings?1:2;
 	a=calloc(1, sizeof(simple_enc));
-	queue_alloc(&q, set);
 	while((curr_sample+set->blocksize_min)<=tot_samples){
 		a->sample_cnt=set->blocksize_min;
 		a->curr_sample=curr_sample;
@@ -63,7 +59,6 @@ int fixed_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 
 	if(set->md5)
 		MD5_Final(set->hash, &ctx);
-
 	stat.effort_output/=tot_samples;
 	stat.cpu_time=((double)(clock()-cstart))/CLOCKS_PER_SEC;
 	print_settings(set);

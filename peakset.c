@@ -1,9 +1,7 @@
 #include "peakset.h"
 
 #include <assert.h>
-#include <omp.h>
 #include <stdlib.h>
-#include <time.h>
 
 typedef struct flist flist;
 
@@ -27,10 +25,6 @@ int peak_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	stats stat={0};
 	uint64_t curr_sample=0;
 	MD5_CTX ctx;
-
-	if(set->md5)
-		MD5_Init(&ctx);
-	cstart=clock();
 
 	if(set->blocks_count==1)
 		goodbye("Error: At least two blocksizes must be available\n");
@@ -59,6 +53,7 @@ int peak_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	running_results=malloc(sizeof(size_t)*(window_size+1));
 	running_step=malloc(sizeof(size_t)*(window_size+1));
 
+	mode_boilerplate_init(set, &cstart, &ctx, &q);
 
 	cstart_sub=clock();
 	/* process frames for stats */
@@ -117,7 +112,6 @@ int peak_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	//use simple_enc to encode
 	set->diff_comp_settings=set->diff_comp_settings?1:2;//hack as analysis not stored
 	a=calloc(1, sizeof(simple_enc));
-	queue_alloc(&q, set);
 	for(frame_curr=frame;frame_curr;frame_curr=frame_curr->next){
 		a->sample_cnt=frame_curr->blocksize;
 		assert(a->sample_cnt);
@@ -136,14 +130,14 @@ int peak_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 
 	if(set->md5)
 		MD5_UpdateSamples(&ctx, input, 0, tot_samples, set);
-	if(set->md5)
-		MD5_Final(set->hash, &ctx);
 
 	stat.effort_anal=0;
 	for(i=0;i<set->blocks_count;++i)//analysis effort approaches the sum of the normalised blocksizes as window_size approaches infinity
 		stat.effort_anal+=step[i];
 	stat.effort_output+=1;
 
+	if(set->md5)
+		MD5_Final(set->hash, &ctx);
 	stat.cpu_time=((double)(clock()-cstart))/CLOCKS_PER_SEC;
 	print_settings(set);
 	print_stats(&stat);

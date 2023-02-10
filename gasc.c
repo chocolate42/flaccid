@@ -2,7 +2,6 @@
 
 #include <assert.h>
 #include <stdlib.h>
-#include <time.h>
 
 int gasc_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	MD5_CTX ctx;
@@ -18,12 +17,9 @@ int gasc_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	a =calloc(1, sizeof(simple_enc));
 	b =calloc(1, sizeof(simple_enc));
 	ab=calloc(1, sizeof(simple_enc));
-	queue_alloc(&q, set);
 
-	if(set->md5)
-		MD5_Init(&ctx);
+	mode_boilerplate_init(set, &cstart, &ctx, &q);
 
-	cstart=clock();
 	if(!simple_enc_eof(&q, &a, set, input, &curr_sample, tot_samples, 2*set->blocks[0], &stat, &ctx, fout)){//if not eof, init
 		simple_enc_analyse(a , set, input, set->blocks[0], 0, &stat, &ctx);
 		simple_enc_analyse(b , set, input, set->blocks[0], set->blocks[0], &stat, &ctx);

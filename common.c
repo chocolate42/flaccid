@@ -346,3 +346,10 @@ void queue_dealloc(queue *q, flac_settings *set, void *input, stats *stat, FILE 
 	free(q->saved);
 	q->saved=NULL;
 }
+
+void mode_boilerplate_init(flac_settings *set, clock_t *cstart, MD5_CTX *ctx, queue *q){
+	if(set->md5)
+		MD5_Init(ctx);
+	*cstart=clock();
+	queue_alloc(q, set);
+}
