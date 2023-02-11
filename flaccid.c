@@ -356,10 +356,6 @@ int main(int argc, char *argv[]){
 		set.rice_order_limit=8;
 	}
 
-	if(!set.lax && set.blocksize_limit_upper>4608)
-		set.blocksize_limit_upper=4608;//<=48KHz assumed fix TODO
-
-
 	set.diff_comp_settings=strcmp(set.comp_anal, set.comp_output)!=0;
 	set.diff_comp_settings=set.diff_comp_settings?set.diff_comp_settings:(set.apod_anal && !set.apod_output);
 	set.diff_comp_settings=set.diff_comp_settings?set.diff_comp_settings:(!set.apod_anal && set.apod_output);
