@@ -42,11 +42,6 @@ int peak_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	for(i=0;i<set->blocks_count;++i)
 		step[i]=set->blocks[i]/set->blocks[0];
 
-	for(i=1;i<set->blocks_count;++i){
-		if(step[i]==step[i-1])
-			goodbye("Error: Duplicate blocksizes in argument\n");
-	}
-
 	for(i=0;i<set->blocks_count;++i)
 		effort+=step[i];
 

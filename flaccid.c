@@ -99,6 +99,7 @@ static int comp_int_asc(const void *aa, const void *bb){
 }
 
 static void parse_blocksize_list(char *list, int **res, size_t *res_cnt){
+	size_t i;
 	char *cptr=list-1;
 	*res_cnt=0;
 	*res=NULL;
@@ -111,6 +112,12 @@ static void parse_blocksize_list(char *list, int **res, size_t *res_cnt){
 			goodbye("Error: Blocksize must be at most 65535\n");
 		*res_cnt=*res_cnt+1;
 	}while((cptr=strchr(cptr+1, ',')));
+
+	qsort(*res, *res_cnt, sizeof(int), comp_int_asc);
+	for(i=1;i<*res_cnt;++i){
+		if((*res)[i]==(*res)[i-1])
+			goodbye("Error: Duplicate blocksizes in list\n");
+	}
 }
 
 int main(int argc, char *argv[]){
@@ -323,7 +330,6 @@ int main(int argc, char *argv[]){
 		goodbye("Error: No mode\n");
 
 	parse_blocksize_list(blocklist_str, &(set.blocks), &(set.blocks_count));
-	qsort(set.blocks, set.blocks_count, sizeof(int), comp_int_asc);
 	set.blocksize_min=set.blocks[0];
 	set.blocksize_max=set.blocks[set.blocks_count-1];
 
