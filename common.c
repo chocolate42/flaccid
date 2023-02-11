@@ -105,8 +105,14 @@ void print_settings(flac_settings *set){
 }
 
 void print_stats(stats *stat){
-	printf("\teffort\tanalysis(%.3f);tweak(%.3f);merge(%.3f);output(%.3f)", stat->effort_anal, stat->effort_tweak, stat->effort_merge, stat->effort_output);
-	printf("\tsubtiming\tanalysis(%.5f);tweak(%.5f);merge(%.5f)", stat->time_anal, stat->time_tweak, stat->time_merge);
+	uint64_t anal=0, out=0, tweak=0, merge=0, i;
+	for(i=0;i<stat->work_count;++i){
+		anal+=stat->effort_anal[i];
+		out+=stat->effort_output[i];
+		tweak+=stat->effort_tweak[i];
+		merge+=stat->effort_merge[i];
+	}
+	printf("\teffort\tanalysis(%.3f);tweak(%.3f);merge(%.3f);output(%.3f)", ((double)anal)/stat->tot_samples, ((double)tweak)/stat->tot_samples, ((double)merge)/stat->tot_samples, ((double)out)/stat->tot_samples);
 	printf("\tsize\t%zu\tcpu_time\t%.5f\n", stat->outsize+42, stat->cpu_time);
 }
 
@@ -120,9 +126,9 @@ static void simple_enc_encode(simple_enc *senc, flac_settings *set, void *input,
 	senc->curr_sample=curr_sample;
 	set->encode_func(senc->enc, input+curr_sample*set->channels*(set->bps==16?2:4), samples, curr_sample, &(senc->outbuf), &(senc->outbuf_size));//do encode
 	if(stat&&(is_anal==1))
-		stat->effort_anal+=samples;
+		stat->effort_anal[omp_get_thread_num()]+=samples;
 	else if(stat)
-		stat->effort_output+=samples;
+		stat->effort_output[omp_get_thread_num()]+=samples;
 }
 
 void simple_enc_analyse(simple_enc *senc, flac_settings *set, void *input, uint32_t samples, uint64_t curr_sample, stats *stat, MD5_CTX *ctx){
@@ -156,7 +162,8 @@ static size_t qmerge(queue *q, flac_settings *set, void *input, stats *stat, int
 	if((q->sq[i]->sample_cnt+q->sq[i+1]->sample_cnt)>set->blocksize_limit_upper)
 		return 0;
 	a=calloc(1, sizeof(simple_enc));
-	simple_enc_analyse(a, set, input, q->sq[i]->sample_cnt+q->sq[i+1]->sample_cnt, q->sq[i]->curr_sample, stat, NULL);
+	stat->effort_merge[omp_get_thread_num()]+=q->sq[i]->sample_cnt+q->sq[i+1]->sample_cnt;
+	simple_enc_analyse(a, set, input, q->sq[i]->sample_cnt+q->sq[i+1]->sample_cnt, q->sq[i]->curr_sample, NULL, NULL);
 	if(a->outbuf_size<(q->sq[i]->outbuf_size+q->sq[i+1]->outbuf_size)){
 		(*saved)+=(q->sq[i]->outbuf_size+q->sq[i+1]->outbuf_size) - a->outbuf_size;
 		FLAC__static_encoder_delete(q->sq[i+1]->enc);//simple_enc only deletes previous if sample_cnt>0, and we're manually messing with that
@@ -231,8 +238,9 @@ static void qtweak(queue *q, flac_settings *set, void *input, stats *stat, int i
 
 	a=calloc(1, sizeof(simple_enc));
 	b=calloc(1, sizeof(simple_enc));
-	simple_enc_analyse(a, set, input, newsplit, q->sq[i]->curr_sample, stat, NULL);
-	simple_enc_analyse(b, set, input, bsize, q->sq[i]->curr_sample+newsplit, stat, NULL);
+	stat->effort_tweak[omp_get_thread_num()]+=q->sq[i]->sample_cnt+q->sq[i+1]->sample_cnt;
+	simple_enc_analyse(a, set, input, newsplit, q->sq[i]->curr_sample, NULL, NULL);
+	simple_enc_analyse(b, set, input, bsize, q->sq[i]->curr_sample+newsplit, NULL, NULL);
 	if((a->outbuf_size+b->outbuf_size)<(q->sq[i]->outbuf_size+q->sq[i+1]->outbuf_size)){
 		(*saved)+=((q->sq[i]->outbuf_size+q->sq[i+1]->outbuf_size) - (a->outbuf_size+b->outbuf_size));
 		simple_enc_dealloc(q->sq[i]);
@@ -347,9 +355,24 @@ void queue_dealloc(queue *q, flac_settings *set, void *input, stats *stat, FILE 
 	q->saved=NULL;
 }
 
-void mode_boilerplate_init(flac_settings *set, clock_t *cstart, MD5_CTX *ctx, queue *q){
+void mode_boilerplate_init(flac_settings *set, clock_t *cstart, MD5_CTX *ctx, queue *q, stats *stat, size_t input_size){
 	if(set->md5)
 		MD5_Init(ctx);
 	*cstart=clock();
+	stat->tot_samples=input_size/(set->channels*(set->bps==16?2:4));
+	stat->work_count=set->work_count;
+	stat->effort_anal=calloc(set->work_count, sizeof(uint64_t));
+	stat->effort_output=calloc(set->work_count, sizeof(uint64_t));
+	stat->effort_tweak=calloc(set->work_count, sizeof(uint64_t));
+	stat->effort_merge=calloc(set->work_count, sizeof(uint64_t));
 	queue_alloc(q, set);
+}
+
+void mode_boilerplate_finish(flac_settings *set, clock_t *cstart, MD5_CTX *ctx, queue *q, stats *stat, void *input, FILE *fout){
+	queue_dealloc(q, set, input, stat, fout);
+	if(set->md5)
+		MD5_Final(set->hash, ctx);
+	stat->cpu_time=((double)(clock()-*cstart))/CLOCKS_PER_SEC;
+	print_settings(set);
+	print_stats(stat);
 }

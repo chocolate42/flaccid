@@ -34,9 +34,9 @@ typedef struct{
 void MD5_UpdateSamples(MD5_CTX *ctx, const void *input, size_t curr_sample, size_t sample_cnt, flac_settings *set);
 
 typedef struct{
-	double effort_anal, effort_output, effort_tweak, effort_merge;
-	double cpu_time, time_anal, time_tweak, time_merge;
-	size_t outsize;
+	uint64_t *effort_anal, *effort_output, *effort_tweak, *effort_merge, tot_samples;
+	double cpu_time;
+	size_t outsize, work_count;
 } stats;
 
 void goodbye(char *s);
@@ -83,6 +83,7 @@ Return a fresh context as the queue has taken the old one
 Advance curr_sample value*/
 simple_enc *simple_enc_out(queue *q, simple_enc *senc, flac_settings *set, void *input, uint64_t *curr_sample, stats *stat, FILE *fout);
 
-void mode_boilerplate_init(flac_settings *set, clock_t *cstart, MD5_CTX *ctx, queue *q);
+void mode_boilerplate_init(flac_settings *set, clock_t *cstart, MD5_CTX *ctx, queue *q, stats *stat, size_t input_size);
+void mode_boilerplate_finish(flac_settings *set, clock_t *cstart, MD5_CTX *ctx, queue *q, stats *stat, void *input, FILE *fout);
 
 #endif

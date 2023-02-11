@@ -59,13 +59,15 @@ int chunk_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	//input thread variables
 	int i;
 	MD5_CTX ctx;
-	size_t curr_sample=0, tot_samples=input_size/(set->channels*(set->bps==16?2:4)), encoder_cnt=2;
+	size_t curr_sample=0, encoder_cnt=2;
 	size_t child_index, parent_index, curr_blocksize, curr_offset;
 	clock_t cstart;
 	queue q;
 	stats stat={0};
 
 	chenc *encoder;
+
+	mode_boilerplate_init(set, &cstart, &ctx, &q, &stat, input_size);
 
 	for(i=1;i<set->blocks_count;++i){
 		if(set->blocks[i-1]*2!=set->blocks[i])
@@ -74,8 +76,6 @@ int chunk_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	}
 	--encoder_cnt;
 	encoder=calloc(encoder_cnt, sizeof(chenc));
-
-	mode_boilerplate_init(set, &cstart, &ctx, &q);
 
 	//build working data
 	parent_index=0;
@@ -105,7 +105,7 @@ int chunk_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 		}
 	}
 
-	while(!simple_enc_eof(&q, &(encoder[0].enc), set, input, &curr_sample, tot_samples, set->blocks[set->blocks_count-1], &stat, &ctx, fout)){//if enough input, chunk
+	while(!simple_enc_eof(&q, &(encoder[0].enc), set, input, &curr_sample, stat.tot_samples, set->blocks[set->blocks_count-1], &stat, &ctx, fout)){//if enough input, chunk
 		#pragma omp parallel for num_threads(set->work_count)
 		for(i=0;i<encoder_cnt;++i){//encode using array for easy multithreading
 			simple_enc_analyse(encoder[i].enc, set, input, encoder[i].blocksize, curr_sample+encoder[i].offset, &stat, i?NULL:&ctx);
@@ -114,23 +114,11 @@ int chunk_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 		chunk_analyse(encoder);
 		chunk_write(encoder, &q, set, input, &curr_sample, &stat, fout);
 	}
-	queue_dealloc(&q, set, input, &stat, fout);
+
+	mode_boilerplate_finish(set, &cstart, &ctx, &q, &stat, input, fout);
+
 	for(i=0;i<encoder_cnt;++i)
 		simple_enc_dealloc(encoder[i].enc);
 	free(encoder);
-
-	if(set->md5)
-		MD5_Final(set->hash, &ctx);
-
-	stat.effort_anal=set->blocks_count;
-	stat.effort_output=1;
-	if(!set->diff_comp_settings){
-		stat.effort_output=stat.effort_anal;
-		stat.effort_anal=0;
-	}
-	stat.cpu_time=((double)(clock()-cstart))/CLOCKS_PER_SEC;
-	print_settings(set);
-	print_stats(&stat);
-
 	return 0;
 }
