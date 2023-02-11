@@ -20,14 +20,13 @@ int MD5_Update(MD5_CTX *ctx, const unsigned char *d, size_t s);
 #endif
 
 typedef struct{
-	int *blocks, diff_comp_settings, tweak, merge, mode, wildcard, outperc, queue_size, md5, lpc_order_limit, rice_order_limit;
+	int *blocks, diff_comp_settings, tweak, merge, mode, wildcard, outperc, queue_size, md5, lpc_order_limit, rice_order_limit, work_count;
 	size_t blocks_count;
-	int work_count, comp_anal_used, do_merge;/*working variables*/
 	char *comp_anal, *comp_output, *comp_outputalt, *apod_anal, *apod_output, *apod_outputalt;
 	int lax, channels, bps, sample_rate;/*flac*/
 	uint32_t minf, maxf;
 	uint8_t hash[16];
-	int blocksize_min, blocksize_max, blocksize_stride, blocksize_limit_lower, blocksize_limit_upper;
+	int blocksize_min, blocksize_max, blocksize_limit_lower, blocksize_limit_upper;
 	FLAC__bool (*encode_func) (FLAC__StaticEncoder*, const void*, uint32_t, uint64_t, void*, size_t*);
 } flac_settings;
 
