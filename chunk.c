@@ -56,16 +56,14 @@ static void chunk_write(chenc *c, queue *q, flac_settings *set, void *input, uin
 }
 
 int chunk_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
-	//input thread variables
-	int i;
-	MD5_CTX ctx;
-	size_t curr_sample=0, encoder_cnt=2;
-	size_t child_index, parent_index, curr_blocksize, curr_offset;
 	clock_t cstart;
+	MD5_CTX ctx;
 	queue q;
 	stats stat={0};
+	uint64_t curr_sample=0;
 
 	chenc *encoder;
+	size_t i, child_index, curr_blocksize, curr_offset, encoder_cnt=2, parent_index;
 
 	mode_boilerplate_init(set, &cstart, &ctx, &q, &stat, input_size);
 

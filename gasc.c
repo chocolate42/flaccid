@@ -4,12 +4,13 @@
 #include <stdlib.h>
 
 int gasc_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
-	MD5_CTX ctx;
-	uint64_t curr_sample=0;
-	stats stat={0};
 	clock_t cstart;
+	MD5_CTX ctx;
 	queue q;
-	simple_enc *swap, *a, *b, *ab;
+	stats stat={0};
+	uint64_t curr_sample=0;
+
+	simple_enc *a, *ab, *b, *swap;
 
 	mode_boilerplate_init(set, &cstart, &ctx, &q, &stat, input_size);
 

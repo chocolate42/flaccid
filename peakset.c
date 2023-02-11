@@ -80,16 +80,14 @@ static void peak_window(queue *q, void *input, size_t *curr_sample, size_t windo
 }
 
 int peak_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
-	size_t effort=0, i, *step;
-	size_t *frame_results, *running_results;
-	size_t *running_step;
-	size_t max_window_size, this_window_size;
 	clock_t cstart;
+	MD5_CTX ctx;
 	queue q;
-	simple_enc *a, **work;
 	stats stat={0};
 	uint64_t curr_sample=0;
-	MD5_CTX ctx;
+
+	simple_enc *a, **work;
+	size_t effort=0, *frame_results, i, max_window_size, *running_results, *running_step, *step, this_window_size;
 
 	mode_boilerplate_init(set, &cstart, &ctx, &q, &stat, input_size);
 

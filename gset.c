@@ -4,14 +4,15 @@
 #include <stdlib.h>
 
 int gset_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
-	uint64_t curr_sample;
-	MD5_CTX ctx;
-	stats stat={0};
 	clock_t cstart;
-	simple_enc **genc;
-	double besteff, *curreff;
-	size_t best, iterations=0, i;
+	MD5_CTX ctx;
 	queue q;
+	stats stat={0};
+	uint64_t curr_sample=0;
+
+	double besteff, *curreff;
+	simple_enc **genc;
+	size_t best, i;
 
 	mode_boilerplate_init(set, &cstart, &ctx, &q, &stat, input_size);
 
@@ -50,7 +51,6 @@ int gset_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 				MD5_UpdateSamples(&ctx, input, curr_sample, set->blocks[best], set);
 			genc[best]=simple_enc_out(&q, genc[best], set, input, &curr_sample, &stat, fout);
 		}
-		++iterations;
 	}
 
 	mode_boilerplate_finish(set, &cstart, &ctx, &q, &stat, input, fout);
