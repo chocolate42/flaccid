@@ -52,6 +52,8 @@ FLAC__StaticEncoder *init_static_encoder(flac_settings *set, int blocksize, char
 		FLAC__stream_encoder_set_streamable_subset(r->stream_encoder, false);
 	else if(blocksize>16384 || (set->sample_rate<=48000 && blocksize>4608))
 		goodbye("Error: Tried to use a non-subset blocksize without setting --lax\n");
+	if(blocksize>set->blocksize_limit_upper)
+		goodbye("Error: Initialising encoder with blocksize bigger than --blocksize-limit-upper\n");
 	FLAC__stream_encoder_set_channels(r->stream_encoder, set->channels);
 	FLAC__stream_encoder_set_bits_per_sample(r->stream_encoder, set->bps);
 	FLAC__stream_encoder_set_sample_rate(r->stream_encoder, set->sample_rate);
@@ -121,7 +123,10 @@ static void simple_enc_encode(simple_enc *senc, flac_settings *set, void *input,
 	assert(samples);
 	if(senc->enc)
 		FLAC__static_encoder_delete(senc->enc);
-	senc->enc=init_static_encoder(set, samples<16?16:samples, is_anal==1?set->comp_anal:(is_anal==0?set->comp_output:set->comp_outputalt), is_anal==1?set->apod_anal:(is_anal==0?set->apod_output:set->apod_outputalt));
+	if(set->mode==4 && samples!=set->blocksize_min)//partial end of fixed encode
+		senc->enc=init_static_encoder(set, set->blocksize_min, is_anal==1?set->comp_anal:(is_anal==0?set->comp_output:set->comp_outputalt), is_anal==1?set->apod_anal:(is_anal==0?set->apod_output:set->apod_outputalt));
+	else
+		senc->enc=init_static_encoder(set, samples<16?16:samples, is_anal==1?set->comp_anal:(is_anal==0?set->comp_output:set->comp_outputalt), is_anal==1?set->apod_anal:(is_anal==0?set->apod_output:set->apod_outputalt));
 	senc->sample_cnt=samples;
 	senc->curr_sample=curr_sample;
 	set->encode_func(senc->enc, input+curr_sample*set->channels*(set->bps==16?2:4), samples, curr_sample, &(senc->outbuf), &(senc->outbuf_size));//do encode
@@ -311,7 +316,7 @@ static void simple_enc_flush(queue *q, flac_settings *set, void *input, stats *s
 			set->minf=q->sq[i]->outbuf_size;
 		if(q->sq[i]->outbuf_size>set->maxf)
 			set->maxf=q->sq[i]->outbuf_size;
-		if(q->sq[i]->sample_cnt<set->blocksize_min)
+		if(set->mode!=4 && q->sq[i]->sample_cnt<set->blocksize_min)
 			set->blocksize_min=q->sq[i]->sample_cnt;
 		if(q->sq[i]->sample_cnt>set->blocksize_max)
 			set->blocksize_max=q->sq[i]->sample_cnt;
