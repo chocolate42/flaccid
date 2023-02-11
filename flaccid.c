@@ -69,6 +69,8 @@ char *help=
 	"                                If supplied this overwrites the apod settings\n"
 	"                                defined by the flac preset\n"
 	" --outputalt-comp comp_string : Alt output settings to use if outperc not 100%%\n"
+	" --peakset-window size : Maximum window size in millions of samples (default 26\n"
+	"                         for 26 million samples, ~10 minutes of 44.1KHz input)\n"
 	" --queue size : Number of frames in output queue (default 8192), when output\n"
 	"                queue is full it gets flushed. Tweak/merge acting on the output\n"
 	"                queue and batching of output encoding allows multithreading\n"
@@ -160,6 +162,7 @@ int main(int argc, char *argv[]){
 		{"outperc", required_argument, 0, 269},
 		{"outputalt-apod", required_argument, 0, 267},
 		{"outputalt-comp", required_argument, 0, 268},
+		{"peakset-window", required_argument, 0, 273},
 		{"queue", required_argument, 0, 270},
 		{"sample-rate",	required_argument, 0, 262},
 		{"tweak", required_argument, 0, 261},
@@ -189,6 +192,7 @@ int main(int argc, char *argv[]){
 	set.md5=1;
 	set.mode=-1;
 	set.outperc=100;
+	set.peakset_window=26;
 	set.queue_size=8192;
 	set.sample_rate=44100;
 	set.tweak=0;
@@ -312,6 +316,12 @@ int main(int argc, char *argv[]){
 
 			case 272:
 				set.lax=1;
+				break;
+
+			case 273:
+				set.peakset_window=atoi(optarg);
+				if(atoi(optarg)<1)
+					goodbye("Error: Invalid --peakset-window setting\n");
 				break;
 
 			case '?':

@@ -10,53 +10,16 @@ struct flist{
 	flist *next;
 };
 
-int peak_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
-	size_t effort=0, i, j, *step;
-	size_t *frame_results, *running_results;
-	uint8_t *running_step;
-	size_t window_size, window_size_check=0;
-	size_t print_effort=0;
-	size_t frame_at;
-	flist *frame=NULL, *frame_curr;
-	clock_t cstart;
-	queue q;
-	simple_enc *a, **work;
-	stats stat={0};
-	uint64_t curr_sample=0;
-	MD5_CTX ctx;
-
-	mode_boilerplate_init(set, &cstart, &ctx, &q, &stat, input_size);
-
-	if(set->blocks_count==1)
-		goodbye("Error: At least two blocksizes must be available\n");
-
-	for(i=1;i<set->blocks_count;++i){
-		if(set->blocks[i]%set->blocks[0])
-			goodbye("Error: All blocksizes must be a multiple of the minimum blocksize\n");
-	}
-	window_size=stat.tot_samples/set->blocks[0];
-	if(!window_size)
-		goodbye("Error: Input too small\n");
-
-	step=malloc(sizeof(size_t)*set->blocks_count);
-	for(i=0;i<set->blocks_count;++i)
-		step[i]=set->blocks[i]/set->blocks[0];
-
-	for(i=0;i<set->blocks_count;++i)
-		effort+=step[i];
-
-	frame_results=malloc(sizeof(size_t)*set->blocks_count*(window_size+1));
-	running_results=malloc(sizeof(size_t)*(window_size+1));
-	running_step=malloc(sizeof(size_t)*(window_size+1));
+static void peak_window(queue *q, void *input, size_t *curr_sample, size_t window_size, FILE *fout, flac_settings *set, stats *stat, simple_enc **work, size_t *step, size_t *frame_results, size_t *running_results, size_t *running_step, size_t effort){
+	simple_enc *a;
+	size_t frame_at, i, j, print_effort=0, window_size_check=0;
+	flist *frame=NULL, *frame_curr, *frame_next;
 
 	/* process frames for stats */
-	work=calloc(set->work_count, sizeof(simple_enc*));
-	for(i=0;i<set->work_count;++i)
-		work[i]=calloc(1, sizeof(simple_enc));
 	for(j=0;j<set->blocks_count;++j){
 		#pragma omp parallel for num_threads(set->work_count)
 		for(i=0;i<window_size-(step[j]-1);++i){
-			simple_enc_analyse(work[omp_get_thread_num()], set, input, set->blocks[j], set->blocksize_min*i, &stat, NULL);
+			simple_enc_analyse(work[omp_get_thread_num()], set, input, set->blocks[j], *curr_sample+(set->blocksize_min*i), stat, NULL);
 			frame_results[(i*set->blocks_count)+j]=work[omp_get_thread_num()]->outbuf_size;
 		}
 		#pragma omp barrier
@@ -65,9 +28,6 @@ int peak_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 		print_effort+=step[j];
 		fprintf(stderr, "Processed %zu/%zu\n", print_effort, effort);
 	}
-	for(i=0;i<set->work_count;++i)
-		simple_enc_dealloc(work[i]);
-	free(work);
 
 	/* analyse stats */
 	running_results[0]=0;
@@ -107,21 +67,80 @@ int peak_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	for(frame_curr=frame;frame_curr;frame_curr=frame_curr->next){
 		a->sample_cnt=frame_curr->blocksize;
 		assert(a->sample_cnt);
-		a->curr_sample=curr_sample;
+		a->curr_sample=*curr_sample;
 		a->outbuf_size=frame_curr->outbuf_size;
-		a=simple_enc_out(&q, a, set, input, &curr_sample, &stat, fout);
+		a=simple_enc_out(q, a, set, input, curr_sample, stat, fout);
 	}
-	if(curr_sample!=stat.tot_samples){//partial
+	simple_enc_dealloc(a);
+
+	for(frame_curr=frame;frame_curr;frame_curr=frame_next){
+		frame_next=frame_curr->next;
+		free(frame_curr);
+	}
+}
+
+int peak_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
+	size_t effort=0, i, *step;
+	size_t *frame_results, *running_results;
+	size_t *running_step;
+	size_t max_window_size, this_window_size;
+	clock_t cstart;
+	queue q;
+	simple_enc *a, **work;
+	stats stat={0};
+	uint64_t curr_sample=0;
+	MD5_CTX ctx;
+
+	mode_boilerplate_init(set, &cstart, &ctx, &q, &stat, input_size);
+
+	if(set->blocks_count==1)
+		goodbye("Error: At least two blocksizes must be available\n");
+
+	for(i=1;i<set->blocks_count;++i){
+		if(set->blocks[i]%set->blocks[0])
+			goodbye("Error: All blocksizes must be a multiple of the minimum blocksize\n");
+	}
+
+	max_window_size=(set->peakset_window*1000000)/set->blocks[0];
+
+	step=malloc(sizeof(size_t)*set->blocks_count);
+	for(i=0;i<set->blocks_count;++i)
+		step[i]=set->blocks[i]/set->blocks[0];
+
+	for(i=0;i<set->blocks_count;++i)
+		effort+=step[i];
+
+	frame_results=malloc(sizeof(size_t)*set->blocks_count*(max_window_size+1));
+	running_results=malloc(sizeof(size_t)*(max_window_size+1));
+	running_step=malloc(sizeof(size_t)*(max_window_size+1));
+
+	work=calloc(set->work_count, sizeof(simple_enc*));
+	for(i=0;i<set->work_count;++i)
+		work[i]=calloc(1, sizeof(simple_enc));
+
+	while(curr_sample!=(stat.tot_samples-(stat.tot_samples%set->blocks[0]))){//for all peak windows
+		this_window_size=((stat.tot_samples-curr_sample)/set->blocks[0])>max_window_size?max_window_size:((stat.tot_samples-curr_sample)/set->blocks[0]);
+		if(set->md5)
+			MD5_UpdateSamples(&ctx, input, curr_sample, this_window_size*set->blocks[0], set);
+		peak_window(&q, input, &curr_sample, this_window_size, fout, set, &stat, work, step, frame_results, running_results, running_step, effort);
+	}
+
+	for(i=0;i<set->work_count;++i)
+		simple_enc_dealloc(work[i]);
+	free(work);
+
+	if(curr_sample!=stat.tot_samples){//partial frame after last window
+		if(set->md5)
+			MD5_UpdateSamples(&ctx, input, curr_sample, stat.tot_samples-curr_sample, set);
+		a=calloc(1, sizeof(simple_enc));
 		a->sample_cnt=stat.tot_samples-curr_sample;
 		a->curr_sample=curr_sample;
 		a=simple_enc_out(&q, a, set, input, &curr_sample, &stat, fout);
+		simple_enc_dealloc(a);
 	}
-	if(set->md5)
-		MD5_UpdateSamples(&ctx, input, 0, stat.tot_samples, set);
 
 	mode_boilerplate_finish(set, &cstart, &ctx, &q, &stat, input, fout);
 
-	simple_enc_dealloc(a);
 	set->diff_comp_settings=set->diff_comp_settings==2?0:1;//reverse hack just in case
 	return 0;
 }
