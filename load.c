@@ -6,7 +6,7 @@
 
 void *load_input(char *path, size_t *input_size, flac_settings *set){
 	if(strlen(path)>3 && strcmp(".wav", path+strlen(path)-4)==0)
-		printf("Warning: .wav input not currently supported, input will be treated as raw\n");
+		fprintf(stderr, "Warning: .wav input not currently supported, input will be treated as raw\n");
 	if(strlen(path)<5 || strcmp(".flac", path+strlen(path)-5)!=0)//load raw
 		return load_raw(path, input_size, set);
 	else

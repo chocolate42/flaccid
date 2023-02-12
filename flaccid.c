@@ -363,7 +363,7 @@ int main(int argc, char *argv[]){
 
 	tot_samples=input_size/(set.channels*(set.bps==16?2:4));
 
-	printf("%s\t", ipath);
+	fprintf(stderr, "%s\t", ipath);
 	encoder[set.mode](input, input_size, fout, &set);
 
 	/* write finished header */

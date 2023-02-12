@@ -91,18 +91,18 @@ FLAC__StaticEncoder *init_static_encoder(flac_settings *set, int blocksize, char
 void print_settings(flac_settings *set){
 	char *modes[]={"chunk", "gset", "peakset", "gasc", "fixed"};
 	int i;
-	printf("settings\tmode(%s);lax(%u);analysis_comp(%s);analysis_apod(%s);output_comp(%s);output_apod(%s);tweak(%u);merge(%u);", modes[set->mode], set->lax, set->comp_anal, set->apod_anal, set->comp_output, set->apod_output, set->tweak, set->merge);
+	fprintf(stderr, "settings\tmode(%s);lax(%u);analysis_comp(%s);analysis_apod(%s);output_comp(%s);output_apod(%s);tweak(%u);merge(%u);", modes[set->mode], set->lax, set->comp_anal, set->apod_anal, set->comp_output, set->apod_output, set->tweak, set->merge);
 
 	if(set->merge||set->tweak||set->mode==3)
-		printf("blocksize_limit_lower(%u);blocksize_limit_upper(%u)", set->blocksize_limit_lower, set->blocksize_limit_upper);
+		fprintf(stderr, "blocksize_limit_lower(%u);blocksize_limit_upper(%u)", set->blocksize_limit_lower, set->blocksize_limit_upper);
 
 	if(set->outperc!=100)
-		printf("outperc(%u);outputalt_comp(%s);outputalt_apod(%s);", set->outperc, set->comp_outputalt, set->apod_outputalt);
+		fprintf(stderr, "outperc(%u);outputalt_comp(%s);outputalt_apod(%s);", set->outperc, set->comp_outputalt, set->apod_outputalt);
 	if(set->blocks_count && set->mode!=3){//gasc doesn't use the list
-		printf(";analysis_blocksizes(%u", set->blocks[0]);
+		fprintf(stderr, ";analysis_blocksizes(%u", set->blocks[0]);
 		for(i=1;i<set->blocks_count;++i)
-			printf(",%u", set->blocks[i]);
-		printf(")");
+			fprintf(stderr, ",%u", set->blocks[i]);
+		fprintf(stderr, ")");
 	}
 }
 
@@ -114,8 +114,8 @@ void print_stats(stats *stat){
 		tweak+=stat->effort_tweak[i];
 		merge+=stat->effort_merge[i];
 	}
-	printf("\teffort\tanalysis(%.3f);tweak(%.3f);merge(%.3f);output(%.3f)", ((double)anal)/stat->tot_samples, ((double)tweak)/stat->tot_samples, ((double)merge)/stat->tot_samples, ((double)out)/stat->tot_samples);
-	printf("\tsize\t%zu\tcpu_time\t%.5f\n", stat->outsize+42, stat->cpu_time);
+	fprintf(stderr, "\teffort\tanalysis(%.3f);tweak(%.3f);merge(%.3f);output(%.3f)", ((double)anal)/stat->tot_samples, ((double)tweak)/stat->tot_samples, ((double)merge)/stat->tot_samples, ((double)out)/stat->tot_samples);
+	fprintf(stderr, "\tsize\t%zu\tcpu_time\t%.5f\n", stat->outsize+42, stat->cpu_time);
 }
 
 static void simple_enc_encode(simple_enc *senc, flac_settings *set, void *input, uint32_t samples, uint64_t curr_sample, int is_anal, stats *stat){
