@@ -10,7 +10,7 @@ struct flist{
 	flist *next;
 };
 
-static void peak_window(queue *q, void *input, size_t *curr_sample, size_t window_size, FILE *fout, flac_settings *set, stats *stat, simple_enc **work, size_t *step, size_t *frame_results, size_t *running_results, size_t *running_step, size_t effort){
+static void peak_window(queue *q, void *input, size_t *curr_sample, size_t window_size, output *out, flac_settings *set, stats *stat, simple_enc **work, size_t *step, size_t *frame_results, size_t *running_results, size_t *running_step, size_t effort){
 	simple_enc *a;
 	size_t frame_at, i, j, print_effort=0, window_size_check=0;
 	flist *frame=NULL, *frame_curr, *frame_next;
@@ -69,7 +69,7 @@ static void peak_window(queue *q, void *input, size_t *curr_sample, size_t windo
 		assert(a->sample_cnt);
 		a->curr_sample=*curr_sample;
 		a->outbuf_size=frame_curr->outbuf_size;
-		a=simple_enc_out(q, a, set, input, curr_sample, stat, fout);
+		a=simple_enc_out(q, a, set, input, curr_sample, stat, out);
 	}
 	simple_enc_dealloc(a);
 
@@ -79,7 +79,7 @@ static void peak_window(queue *q, void *input, size_t *curr_sample, size_t windo
 	}
 }
 
-int peak_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
+int peak_main(void *input, size_t input_size, output *out, flac_settings *set){
 	clock_t cstart;
 	MD5_CTX ctx;
 	queue q;
@@ -120,7 +120,7 @@ int peak_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 		this_window_size=((stat.tot_samples-curr_sample)/set->blocks[0])>max_window_size?max_window_size:((stat.tot_samples-curr_sample)/set->blocks[0]);
 		if(set->md5)
 			MD5_UpdateSamples(&ctx, input, curr_sample, this_window_size*set->blocks[0], set);
-		peak_window(&q, input, &curr_sample, this_window_size, fout, set, &stat, work, step, frame_results, running_results, running_step, effort);
+		peak_window(&q, input, &curr_sample, this_window_size, out, set, &stat, work, step, frame_results, running_results, running_step, effort);
 	}
 
 	for(i=0;i<set->work_count;++i)
@@ -133,11 +133,11 @@ int peak_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 		a=calloc(1, sizeof(simple_enc));
 		a->sample_cnt=stat.tot_samples-curr_sample;
 		a->curr_sample=curr_sample;
-		a=simple_enc_out(&q, a, set, input, &curr_sample, &stat, fout);
+		a=simple_enc_out(&q, a, set, input, &curr_sample, &stat, out);
 		simple_enc_dealloc(a);
 	}
 
-	mode_boilerplate_finish(set, &cstart, &ctx, &q, &stat, input, fout);
+	mode_boilerplate_finish(set, &cstart, &ctx, &q, &stat, input, out);
 
 	set->diff_comp_settings=set->diff_comp_settings==2?0:1;//reverse hack just in case
 	return 0;

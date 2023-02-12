@@ -3,7 +3,7 @@
 #include <assert.h>
 #include <stdlib.h>
 
-int gset_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
+int gset_main(void *input, size_t input_size, output *out, flac_settings *set){
 	clock_t cstart;
 	MD5_CTX ctx;
 	queue q;
@@ -44,16 +44,16 @@ int gset_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 		}
 		if(best==set->blocks_count){//partial end frame
 				simple_enc_analyse(genc[0], set, input, stat.tot_samples-curr_sample, curr_sample, &stat, &ctx);
-				genc[0]=simple_enc_out(&q, genc[0], set, input, &curr_sample, &stat, fout);
+				genc[0]=simple_enc_out(&q, genc[0], set, input, &curr_sample, &stat, out);
 		}
 		else{
 			if(set->md5)
 				MD5_UpdateSamples(&ctx, input, curr_sample, set->blocks[best], set);
-			genc[best]=simple_enc_out(&q, genc[best], set, input, &curr_sample, &stat, fout);
+			genc[best]=simple_enc_out(&q, genc[best], set, input, &curr_sample, &stat, out);
 		}
 	}
 
-	mode_boilerplate_finish(set, &cstart, &ctx, &q, &stat, input, fout);
+	mode_boilerplate_finish(set, &cstart, &ctx, &q, &stat, input, out);
 
 	for(i=0;i<set->blocks_count;++i)
 		simple_enc_dealloc(genc[i]);

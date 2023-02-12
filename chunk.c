@@ -44,18 +44,18 @@ static size_t chunk_analyse(chenc *c){
 }
 
 // Write best combination of frames in correct order
-static void chunk_write(chenc *c, queue *q, flac_settings *set, void *input, uint64_t *curr_sample, stats *stat, FILE *fout){
+static void chunk_write(chenc *c, queue *q, flac_settings *set, void *input, uint64_t *curr_sample, stats *stat, output *out){
 	if(c->use_this)
-		c->enc=simple_enc_out(q, c->enc, set, input, curr_sample, stat, fout);
+		c->enc=simple_enc_out(q, c->enc, set, input, curr_sample, stat, out);
 	else{
 		if(c->l)
-			chunk_write(c->l, q, set, input, curr_sample, stat, fout);
+			chunk_write(c->l, q, set, input, curr_sample, stat, out);
 		if(c->r)
-			chunk_write(c->r, q, set, input, curr_sample, stat, fout);
+			chunk_write(c->r, q, set, input, curr_sample, stat, out);
 	}
 }
 
-int chunk_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
+int chunk_main(void *input, size_t input_size, output *out, flac_settings *set){
 	clock_t cstart;
 	MD5_CTX ctx;
 	queue q;
@@ -103,17 +103,17 @@ int chunk_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 		}
 	}
 
-	while(!simple_enc_eof(&q, &(encoder[0].enc), set, input, &curr_sample, stat.tot_samples, set->blocks[set->blocks_count-1], &stat, &ctx, fout)){//if enough input, chunk
+	while(!simple_enc_eof(&q, &(encoder[0].enc), set, input, &curr_sample, stat.tot_samples, set->blocks[set->blocks_count-1], &stat, &ctx, out)){//if enough input, chunk
 		#pragma omp parallel for num_threads(set->work_count)
 		for(i=0;i<encoder_cnt;++i){//encode using array for easy multithreading
 			simple_enc_analyse(encoder[i].enc, set, input, encoder[i].blocksize, curr_sample+encoder[i].offset, &stat, i?NULL:&ctx);
 		}
 		#pragma omp barrier
 		chunk_analyse(encoder);
-		chunk_write(encoder, &q, set, input, &curr_sample, &stat, fout);
+		chunk_write(encoder, &q, set, input, &curr_sample, &stat, out);
 	}
 
-	mode_boilerplate_finish(set, &cstart, &ctx, &q, &stat, input, fout);
+	mode_boilerplate_finish(set, &cstart, &ctx, &q, &stat, input, out);
 
 	for(i=0;i<encoder_cnt;++i)
 		simple_enc_dealloc(encoder[i].enc);

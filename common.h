@@ -59,11 +59,21 @@ typedef struct{
 	size_t *saved;
 } queue;
 
+typedef struct{
+	FILE *fout;
+	uint8_t *cache;
+	size_t cache_size, cache_alloc;
+} output;
+
+int out_open(output *out, const char *pathname);
+size_t out_write(output *out, const void *ptr, size_t size);
+void out_close(output *out);
+
 /*allocate the queue*/
 void queue_alloc(queue *q, flac_settings *set);
 
 /*flush the queue then deallocate*/
-void queue_dealloc(queue *q, flac_settings *set, void *input, stats *stat, FILE *fout);
+void queue_dealloc(queue *q, flac_settings *set, void *input, stats *stat, output *out);
 
 /*encode an analysis frame with a simple encoder instance
 Also MD5 input if context present, it is up to the analysis algorithm if and when to hash*/
@@ -73,16 +83,16 @@ void simple_enc_dealloc(simple_enc *senc);
 
 /*Encode and output the rest of the file as a single frame with output settings if there's not enough of the file left for analysis to chew on
 Advance curr_sample if necessary*/
-int simple_enc_eof(queue *q, simple_enc **senc, flac_settings *set, void *input, uint64_t *curr_sample, uint64_t tot_samples, uint64_t threshold, stats *stat, MD5_CTX *ctx, FILE *fout);
+int simple_enc_eof(queue *q, simple_enc **senc, flac_settings *set, void *input, uint64_t *curr_sample, uint64_t tot_samples, uint64_t threshold, stats *stat, MD5_CTX *ctx, output *out);
 
 /* Assumes the context has already done an analysis encode with the same input
 If analysis settings == output settings, add precomputed frame to output queue
 Otherwise, redo frame encode using output settings and add to queue
 Return a fresh context as the queue has taken the old one
 Advance curr_sample value*/
-simple_enc *simple_enc_out(queue *q, simple_enc *senc, flac_settings *set, void *input, uint64_t *curr_sample, stats *stat, FILE *fout);
+simple_enc *simple_enc_out(queue *q, simple_enc *senc, flac_settings *set, void *input, uint64_t *curr_sample, stats *stat, output *out);
 
 void mode_boilerplate_init(flac_settings *set, clock_t *cstart, MD5_CTX *ctx, queue *q, stats *stat, size_t input_size);
-void mode_boilerplate_finish(flac_settings *set, clock_t *cstart, MD5_CTX *ctx, queue *q, stats *stat, void *input, FILE *fout);
+void mode_boilerplate_finish(flac_settings *set, clock_t *cstart, MD5_CTX *ctx, queue *q, stats *stat, void *input, output *out);
 
 #endif

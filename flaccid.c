@@ -43,23 +43,37 @@ char *help=
 	"        of 4608. Multithreaded, acts on the output queue and can be sped up at a\n"
 	"        minor efficiency loss by using a smaller queue\n"
 	"\nOptions:\n"
-	" --analysis-apod apod_string : Apodization settings to use during analysis. If\n"
-	"                               supplied this overwrites the apod settings\n"
-	"                               defined by the flac preset\n"
-	" --analysis-comp comp_string : Compression settings to use during analysis\n"
+	"\n  [I/O]\n"
+	" --in infile : Source, pipe unsupported\n"
+	" --out outfile : Destination. Use - to specify piping to stdout, however this\n"
+	"                 caches the entire output as the header needs to be updated.\n"
+	"                 Output pipe should only be used if entire audio can fit in RAM\n"
+	" --sample-rate num : Set sample rate for raw input\n"
+	"\n  [FLACCID settings]\n"
 	" --blocksize-list block,list : Blocksizes that a mode is allowed to use for\n"
 	"                               analysis. Different modes have different\n"
 	"                               constraints on valid combinations\n"
 	" --blocksize-limit-lower limit : Minimum blocksize a frame can be\n"
 	" --blocksize-limit-upper limit : Maximum blocksize a frame can be\n"
-	" --in infile : Source, pipe unsupported\n"
-	" --lax : Allow non-subset settings\n"
 	" --merge threshold : If set enables merge passes, iterates until a pass saves\n"
 	"                     less than threshold bytes\n"
 	" --mode mode : Which variable-blocksize algorithm to use for analysis. Valid\n"
 	"               modes: fixed, peakset, gasc, chunk, gset\n"
 	" --no-md5 : Disable MD5 generation\n"
-	" --out outfile : Destination\n"
+	" --peakset-window size : Maximum window size in millions of samples (default 26\n"
+	"                         for 26 million samples, ~10 minutes of 44.1KHz input)\n"
+	" --queue size : Number of frames in output queue (default 8192), when output\n"
+	"                queue is full it gets flushed. Tweak/merge acting on the output\n"
+	"                queue and batching of output encoding allows multithreading\n"
+	"                even if the mode used is single-threaded\n"
+	" --tweak threshold : If set enables tweak passes, iterates until a pass saves\n"
+	"                     less than threshold bytes\n"
+	" --workers integer : The maximum number of threads to use\n"
+	"\n  [FLAC settings]\n"
+	" --analysis-apod apod_string : Apodization settings to use during analysis. If\n"
+	"                               supplied this overwrites the apod settings\n"
+	"                               defined by the flac preset\n"
+	" --analysis-comp comp_string : Compression settings to use during analysis\n"
 	" --output-apod apod_string : Apodization settings to use during output. If\n"
 	"                             supplied this overwrites the apod settings\n"
 	"                             defined by the flac preset\n"
@@ -69,16 +83,7 @@ char *help=
 	"                                If supplied this overwrites the apod settings\n"
 	"                                defined by the flac preset\n"
 	" --outputalt-comp comp_string : Alt output settings to use if outperc not 100%%\n"
-	" --peakset-window size : Maximum window size in millions of samples (default 26\n"
-	"                         for 26 million samples, ~10 minutes of 44.1KHz input)\n"
-	" --queue size : Number of frames in output queue (default 8192), when output\n"
-	"                queue is full it gets flushed. Tweak/merge acting on the output\n"
-	"                queue and batching of output encoding allows multithreading\n"
-	"                even if the mode used is single-threaded\n"
-	" --sample-rate num : Set sample rate for raw input\n"
-	" --tweak threshold : If set enables tweak passes, iterates until a pass saves\n"
-	"                     less than threshold bytes\n"
-	" --workers integer : The maximum number of threads to use\n"
+	" --lax : Allow non-subset settings\n"
 	"\nCompression settings format:\n"
 	" * Mostly follows ./flac interface but requires settings to be in single string\n"
 	" * Compression level must be the first element\n"
@@ -123,9 +128,9 @@ static void parse_blocksize_list(char *list, int **res, size_t *res_cnt){
 }
 
 int main(int argc, char *argv[]){
-	int (*encoder[6])(void*, size_t, FILE*, flac_settings*)={chunk_main, gset_main, peak_main, gasc_main, fixed_main, NULL};
+	int (*encoder[6])(void*, size_t, output*, flac_settings*)={chunk_main, gset_main, peak_main, gasc_main, fixed_main, NULL};
 	char *ipath=NULL, *opath=NULL;
-	FILE *fout;
+	output out;
 	void *input;
 	size_t input_size;
 	uint8_t header[42]={
@@ -343,9 +348,9 @@ int main(int argc, char *argv[]){
 	set.blocksize_min=set.blocks[0];
 	set.blocksize_max=set.blocks[set.blocks_count-1];
 
-	if(!(fout=fopen(opath, "wb+")))
+	if(!(out_open(&out, opath)))
 		goodbye("Error: fopen() output failed\n");
-	fwrite(header, 1, 42, fout);
+	out_write(&out, header, 42);
 
 	input=load_input(ipath, &input_size, &set);
 
@@ -364,7 +369,7 @@ int main(int argc, char *argv[]){
 	tot_samples=input_size/(set.channels*(set.bps==16?2:4));
 
 	fprintf(stderr, "%s\t", ipath);
-	encoder[set.mode](input, input_size, fout, &set);
+	encoder[set.mode](input, input_size, &out, &set);
 
 	/* write finished header */
 	header[ 8]=(set.blocksize_min>>8)&255;
@@ -386,9 +391,13 @@ int main(int argc, char *argv[]){
 	header[24]=(tot_samples>> 8)&255;
 	header[25]=(tot_samples>> 0)&255;
 	memcpy(header+26, set.hash, 16);
-	fflush(fout);
-	fseek(fout, 0, SEEK_SET);
-	fwrite(header, 1, 42, fout);
 
-	fclose(fout);
+	if(out.fout==stdout)//do this instead of a full seek implementation for typedef output
+		memcpy(out.cache, header, 42);
+	else{
+		fflush(out.fout);
+		fseek(out.fout, 0, SEEK_SET);
+		fwrite(header, 1, 42, out.fout);
+	}
+	out_close(&out);
 }

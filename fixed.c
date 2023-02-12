@@ -2,7 +2,7 @@
 
 #include <stdlib.h>
 
-int fixed_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
+int fixed_main(void *input, size_t input_size, output *out, flac_settings *set){
 	clock_t cstart;
 	MD5_CTX ctx;
 	queue q;
@@ -25,10 +25,10 @@ int fixed_main(void *input, size_t input_size, FILE *fout, flac_settings *set){
 	a=calloc(1, sizeof(simple_enc));
 	while(curr_sample<stat.tot_samples){
 		simple_enc_analyse(a, set, input, ((curr_sample+set->blocksize_min)<=stat.tot_samples?set->blocksize_min:stat.tot_samples-curr_sample), curr_sample, &stat, &ctx);
-		a=simple_enc_out(&q, a, set, input, &curr_sample, &stat, fout);
+		a=simple_enc_out(&q, a, set, input, &curr_sample, &stat, out);
 	}
 
-	mode_boilerplate_finish(set, &cstart, &ctx, &q, &stat, input, fout);
+	mode_boilerplate_finish(set, &cstart, &ctx, &q, &stat, input, out);
 
 	simple_enc_dealloc(a);
 	return 0;

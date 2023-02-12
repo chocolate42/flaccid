@@ -39,6 +39,37 @@ void MD5_UpdateSamples(MD5_CTX *ctx, const void *input, size_t curr_sample, size
 	}
 }
 
+/*Cache output when piping to allow header to be updated*/
+int out_open(output *out, const char *pathname){
+	out->fout=strcmp(pathname, "-")==0?stdout:fopen(pathname, "wb+");
+	out->cache=NULL;
+	out->cache_size=0;
+	out->cache_alloc=0;
+	return out->fout!=NULL;
+}
+
+size_t out_write(output *out, const void *ptr, size_t size){
+	if(out->fout==stdout){
+		if(size>(out->cache_alloc-out->cache_size)){
+			out->cache=realloc(out->cache, out->cache_size+size+(16ull*1048576ull));
+			out->cache_alloc=out->cache_size+size+(16ull*1048576ull);
+		}
+		memcpy(out->cache+out->cache_size, ptr, size);
+		out->cache_size+=size;
+		return size;
+	}
+	else
+		return fwrite(ptr, 1, size, out->fout);
+}
+
+void out_close(output *out){
+	if(out->fout==stdout){
+		fwrite(out->cache, 1, out->cache_size, out->fout);
+		free(out->cache);
+	}
+	fclose(out->fout);
+}
+
 void goodbye(char *s){
 	fprintf(stderr, "%s", s);
 	exit(1);
@@ -142,13 +173,13 @@ void simple_enc_analyse(simple_enc *senc, flac_settings *set, void *input, uint3
 		MD5_UpdateSamples(ctx, input, curr_sample, samples, set);
 }
 
-int simple_enc_eof(queue *q, simple_enc **senc, flac_settings *set, void *input, uint64_t *curr_sample, uint64_t tot_samples, uint64_t threshold, stats *stat, MD5_CTX *ctx, FILE *fout){
+int simple_enc_eof(queue *q, simple_enc **senc, flac_settings *set, void *input, uint64_t *curr_sample, uint64_t tot_samples, uint64_t threshold, stats *stat, MD5_CTX *ctx, output *out){
 	if((tot_samples-*curr_sample)<threshold){//EOF
 		if(tot_samples-*curr_sample){
 			if(ctx && set->md5)
 				MD5_UpdateSamples(ctx, input, *curr_sample, tot_samples-*curr_sample, set);
 			simple_enc_encode(*senc, set, input, tot_samples-*curr_sample, *curr_sample, 1, stat);//do analysis just to treat final frame the same as the rest
-			*senc=simple_enc_out(q, *senc, set, input, curr_sample, stat, fout);//just add to queue, let analysis implementation flush when it deallocates queue
+			*senc=simple_enc_out(q, *senc, set, input, curr_sample, stat, out);//just add to queue, let analysis implementation flush when it deallocates queue
 		}
 		return 1;
 	}
@@ -294,7 +325,7 @@ static void queue_tweak(queue *q, flac_settings *set, void *input, stats *stat){
 }
 
 /*Flush queue to file*/
-static void simple_enc_flush(queue *q, flac_settings *set, void *input, stats *stat, FILE *fout){
+static void simple_enc_flush(queue *q, flac_settings *set, void *input, stats *stat, output *out){
 	size_t i;
 	if(!q->depth)
 		return;
@@ -320,16 +351,16 @@ static void simple_enc_flush(queue *q, flac_settings *set, void *input, stats *s
 			set->blocksize_min=q->sq[i]->sample_cnt;
 		if(q->sq[i]->sample_cnt>set->blocksize_max)
 			set->blocksize_max=q->sq[i]->sample_cnt;
-		stat->outsize+=fwrite(q->sq[i]->outbuf, 1, q->sq[i]->outbuf_size, fout);
+		stat->outsize+=out_write(out, q->sq[i]->outbuf, q->sq[i]->outbuf_size);
 	}
 	q->depth=0;//reset
 }
 
 /*Add analysed+chosen frame to output queue. Swap out simple_enc instance to an unused one, queue takes control of senc*/
-simple_enc* simple_enc_out(queue *q, simple_enc *senc, flac_settings *set, void *input, uint64_t *curr_sample, stats *stat, FILE *fout){
+simple_enc* simple_enc_out(queue *q, simple_enc *senc, flac_settings *set, void *input, uint64_t *curr_sample, stats *stat, output *out){
 	simple_enc *ret;
 	if(q->depth==set->queue_size)
-		simple_enc_flush(q, set, input, stat, fout);
+		simple_enc_flush(q, set, input, stat, out);
 	(*curr_sample)+=senc->sample_cnt;
 	ret=q->sq[q->depth];
 	q->sq[q->depth++]=senc;
@@ -347,9 +378,9 @@ void queue_alloc(queue *q, flac_settings *set){
 	q->saved=calloc(set->work_count, sizeof(size_t));
 }
 
-void queue_dealloc(queue *q, flac_settings *set, void *input, stats *stat, FILE *fout){
+void queue_dealloc(queue *q, flac_settings *set, void *input, stats *stat, output *out){
 	size_t i;
-	simple_enc_flush(q, set, input, stat, fout);
+	simple_enc_flush(q, set, input, stat, out);
 	for(i=0;i<set->queue_size;++i)
 		simple_enc_dealloc(q->sq[i]);
 	free(q->sq);
@@ -373,8 +404,8 @@ void mode_boilerplate_init(flac_settings *set, clock_t *cstart, MD5_CTX *ctx, qu
 	queue_alloc(q, set);
 }
 
-void mode_boilerplate_finish(flac_settings *set, clock_t *cstart, MD5_CTX *ctx, queue *q, stats *stat, void *input, FILE *fout){
-	queue_dealloc(q, set, input, stat, fout);
+void mode_boilerplate_finish(flac_settings *set, clock_t *cstart, MD5_CTX *ctx, queue *q, stats *stat, void *input, output *out){
+	queue_dealloc(q, set, input, stat, out);
 	if(set->md5)
 		MD5_Final(set->hash, ctx);
 	stat->cpu_time=((double)(clock()-*cstart))/CLOCKS_PER_SEC;

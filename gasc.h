@@ -4,6 +4,6 @@
 
 #include "common.h"
 
-int gasc_main(void *input, size_t input_size, FILE *fout, flac_settings *set);
+int gasc_main(void *input, size_t input_size, output *out, flac_settings *set);
 
 #endif
