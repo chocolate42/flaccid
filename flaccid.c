@@ -368,8 +368,8 @@ int main(int argc, char *argv[]){
 
 	tot_samples=input_size/(set.channels*(set.bps==16?2:4));
 
-	fprintf(stderr, "%s\t", ipath);
 	encoder[set.mode](input, input_size, &out, &set);
+	fprintf(stderr, "\t%s\n", ipath);
 
 	/* write finished header */
 	header[ 8]=(set.blocksize_min>>8)&255;

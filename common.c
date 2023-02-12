@@ -146,7 +146,7 @@ void print_stats(stats *stat){
 		merge+=stat->effort_merge[i];
 	}
 	fprintf(stderr, "\teffort\tanalysis(%.3f);tweak(%.3f);merge(%.3f);output(%.3f)", ((double)anal)/stat->tot_samples, ((double)tweak)/stat->tot_samples, ((double)merge)/stat->tot_samples, ((double)out)/stat->tot_samples);
-	fprintf(stderr, "\tsize\t%zu\tcpu_time\t%.5f\n", stat->outsize+42, stat->cpu_time);
+	fprintf(stderr, "\tsize\t%zu\tcpu_time\t%.5f", stat->outsize+42, stat->cpu_time);
 }
 
 static void simple_enc_encode(simple_enc *senc, flac_settings *set, void *input, uint32_t samples, uint64_t curr_sample, int is_anal, stats *stat){
