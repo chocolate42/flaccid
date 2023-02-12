@@ -348,7 +348,7 @@ static void simple_enc_flush(queue *q, flac_settings *set, void *input, stats *s
 		if(q->sq[i]->outbuf_size>set->maxf)
 			set->maxf=q->sq[i]->outbuf_size;
 		if(set->mode!=4 && q->sq[i]->sample_cnt<set->blocksize_min)
-			set->blocksize_min=q->sq[i]->sample_cnt;
+			set->blocksize_min=q->sq[i]->sample_cnt<16?set->blocksize_min:q->sq[i]->sample_cnt;//hotfix, values 0-15 are invalid per spec. This only happens for a very small last frame on variable encodes
 		if(q->sq[i]->sample_cnt>set->blocksize_max)
 			set->blocksize_max=q->sq[i]->sample_cnt;
 		stat->outsize+=out_write(out, q->sq[i]->outbuf, q->sq[i]->outbuf_size);
