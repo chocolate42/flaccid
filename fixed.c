@@ -24,7 +24,7 @@ int fixed_main(void *input, size_t input_size, output *out, flac_settings *set){
 
 	a=calloc(1, sizeof(simple_enc));
 	while(curr_sample<stat.tot_samples){
-		simple_enc_analyse(a, set, input, ((curr_sample+set->blocksize_min)<=stat.tot_samples?set->blocksize_min:stat.tot_samples-curr_sample), curr_sample, &stat, &ctx);
+		simple_enc_analyse(a, set, input, ((curr_sample+set->blocks[0])<=stat.tot_samples?set->blocks[0]:stat.tot_samples-curr_sample), curr_sample, &stat, &ctx);
 		a=simple_enc_out(&q, a, set, input, &curr_sample, &stat, out);
 	}
 

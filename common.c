@@ -155,10 +155,7 @@ static void simple_enc_encode(simple_enc *senc, flac_settings *set, void *input,
 	assert(samples);
 	if(senc->enc)
 		FLAC__static_encoder_delete(senc->enc);
-	if(set->mode==4 && samples!=set->blocksize_min)//partial end of fixed encode
-		senc->enc=init_static_encoder(set, set->blocksize_min, is_anal==1?set->comp_anal:(is_anal==0?set->comp_output:set->comp_outputalt), is_anal==1?set->apod_anal:(is_anal==0?set->apod_output:set->apod_outputalt));
-	else
-		senc->enc=init_static_encoder(set, samples<16?16:samples, is_anal==1?set->comp_anal:(is_anal==0?set->comp_output:set->comp_outputalt), is_anal==1?set->apod_anal:(is_anal==0?set->apod_output:set->apod_outputalt));
+	senc->enc=init_static_encoder(set, set->mode==4?set->blocks[0]:(samples<16?16:samples), is_anal==1?set->comp_anal:(is_anal==0?set->comp_output:set->comp_outputalt), is_anal==1?set->apod_anal:(is_anal==0?set->apod_output:set->apod_outputalt));
 	senc->sample_cnt=samples;
 	senc->curr_sample=curr_sample;
 	set->encode_func(senc->enc, input+curr_sample*set->channels*(set->bps==16?2:4), samples, curr_sample, &(senc->outbuf), &(senc->outbuf_size));//do encode
@@ -349,7 +346,7 @@ static void simple_enc_flush(queue *q, flac_settings *set, void *input, stats *s
 		if(q->sq[i]->outbuf_size>set->maxf)
 			set->maxf=q->sq[i]->outbuf_size;
 		if(set->mode!=4 && q->sq[i]->sample_cnt<set->blocksize_min)
-			set->blocksize_min=q->sq[i]->sample_cnt<16?set->blocksize_min:q->sq[i]->sample_cnt;//hotfix, values 0-15 are invalid per spec. This only happens for a very small last frame on variable encodes
+			set->blocksize_min=q->sq[i]->sample_cnt<16?set->blocksize_min:q->sq[i]->sample_cnt;//values 0-15 are invalid per spec. This only happens for a very small last frame on variable encodes
 		if(q->sq[i]->sample_cnt>set->blocksize_max)
 			set->blocksize_max=q->sq[i]->sample_cnt;
 		stat->outsize+=out_write(out, q->sq[i]->outbuf, q->sq[i]->outbuf_size);
