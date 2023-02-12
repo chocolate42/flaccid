@@ -39,8 +39,9 @@ void MD5_UpdateSamples(MD5_CTX *ctx, const void *input, size_t curr_sample, size
 	}
 }
 
-/*Cache output when piping to allow header to be updated*/
-int out_open(output *out, const char *pathname){
+/*Cache output when piping and seekable to allow header to be updated*/
+int out_open(output *out, const char *pathname, int seek){
+	out->usecache = (seek && strcmp(pathname, "-")==0);
 	out->fout=strcmp(pathname, "-")==0?stdout:fopen(pathname, "wb+");
 	out->cache=NULL;
 	out->cache_size=0;
@@ -49,7 +50,7 @@ int out_open(output *out, const char *pathname){
 }
 
 size_t out_write(output *out, const void *ptr, size_t size){
-	if(out->fout==stdout){
+	if(out->usecache){
 		if(size>(out->cache_alloc-out->cache_size)){
 			out->cache=realloc(out->cache, out->cache_size+size+(16ull*1048576ull));
 			out->cache_alloc=out->cache_size+size+(16ull*1048576ull);
@@ -63,7 +64,7 @@ size_t out_write(output *out, const void *ptr, size_t size){
 }
 
 void out_close(output *out){
-	if(out->fout==stdout){
+	if(out->usecache){
 		fwrite(out->cache, 1, out->cache_size, out->fout);
 		free(out->cache);
 	}

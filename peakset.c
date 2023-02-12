@@ -19,7 +19,7 @@ static void peak_window(queue *q, void *input, size_t *curr_sample, size_t windo
 	for(j=0;j<set->blocks_count;++j){
 		#pragma omp parallel for num_threads(set->work_count)
 		for(i=0;i<window_size-(step[j]-1);++i){
-			simple_enc_analyse(work[omp_get_thread_num()], set, input, set->blocks[j], *curr_sample+(set->blocksize_min*i), stat, NULL);
+			simple_enc_analyse(work[omp_get_thread_num()], set, input, set->blocks[j], *curr_sample+(set->blocks[0]*i), stat, NULL);
 			frame_results[(i*set->blocks_count)+j]=work[omp_get_thread_num()]->outbuf_size;
 		}
 		#pragma omp barrier

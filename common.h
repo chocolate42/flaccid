@@ -20,7 +20,7 @@ int MD5_Update(MD5_CTX *ctx, const unsigned char *d, size_t s);
 #endif
 
 typedef struct{
-	int *blocks, diff_comp_settings, tweak, merge, mode, wildcard, outperc, queue_size, md5, lpc_order_limit, rice_order_limit, work_count, peakset_window;
+	int *blocks, diff_comp_settings, tweak, merge, mode, wildcard, outperc, queue_size, md5, lpc_order_limit, rice_order_limit, work_count, peakset_window, seek;
 	size_t blocks_count;
 	char *comp_anal, *comp_output, *comp_outputalt, *apod_anal, *apod_output, *apod_outputalt;
 	int lax, channels, bps, sample_rate;/*flac*/
@@ -60,12 +60,13 @@ typedef struct{
 } queue;
 
 typedef struct{
+	int usecache;
 	FILE *fout;
 	uint8_t *cache;
 	size_t cache_size, cache_alloc;
 } output;
 
-int out_open(output *out, const char *pathname);
+int out_open(output *out, const char *pathname, int seek);
 size_t out_write(output *out, const void *ptr, size_t size);
 void out_close(output *out);
 

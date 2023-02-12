@@ -14,7 +14,7 @@ int gasc_main(void *input, size_t input_size, output *out, flac_settings *set){
 
 	mode_boilerplate_init(set, &cstart, &ctx, &q, &stat, input_size);
 
-	if(set->blocksize_min!=set->blocksize_max)
+	if(set->blocks_count!=1)
 		goodbye("Error: gasc cannot use multiple block sizes\n");
 
 	a =calloc(1, sizeof(simple_enc));

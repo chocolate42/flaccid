@@ -45,9 +45,14 @@ char *help=
 	"\nOptions:\n"
 	"\n  [I/O]\n"
 	" --in infile : Source, pipe unsupported\n"
-	" --out outfile : Destination. Use - to specify piping to stdout, however this\n"
-	"                 caches the entire output as the header needs to be updated.\n"
-	"                 Output pipe should only be used if entire audio can fit in RAM\n"
+	" --out outfile : Destination. Use - to specify piping to stdout. By default the\n"
+	"                 output pipe caches the entire output to RAM allowing the\n"
+	"                 header to be updated before writing to pipe. Using --no-seek\n"
+	"                 allows the output pipe to write output frames as soon as they\n"
+	"                 are available\n"
+	" --no-seek : Disable seeking of the output stream, meaning the header cannot be\n"
+	"             updated at the end of the encode. Requires --no-md5 to also be set\n"
+	"             to ensure the user knows that disabling seek disables MD5\n"
 	" --sample-rate num : Set sample rate for raw input\n"
 	"\n  [FLACCID settings]\n"
 	" --blocksize-list block,list : Blocksizes that a mode is allowed to use for\n"
@@ -146,7 +151,7 @@ int main(int argc, char *argv[]){
 
 	uint64_t tot_samples;
 	flac_settings set;
-	char *blocklist_str="1152,2304,4608";
+	char *blocklist_str=NULL;
 
 	int c, option_index;
 	static struct option long_options[]={
@@ -161,6 +166,7 @@ int main(int argc, char *argv[]){
 		{"merge",	required_argument, 0, 265},
 		{"mode", required_argument, 0, 'm'},
 		{"no-md5", no_argument, 0, 271},
+		{"no-seek", no_argument, 0, 274},
 		{"out", required_argument, 0, 'o'},
 		{"output-apod", required_argument, 0, 260},
 		{"output-comp", required_argument, 0, 257},
@@ -181,20 +187,21 @@ int main(int argc, char *argv[]){
 	set.apod_output=NULL;
 	set.apod_outputalt=NULL;
 	set.blocksize_limit_lower=256;
-	set.blocksize_limit_upper=65535;
+	set.blocksize_limit_upper=0;
 	set.blocksize_max=4096;
 	set.blocksize_min=4096;
 	set.bps=16;
 	set.channels=2;
-	set.comp_anal="5";
-	set.comp_output="8p";
-	set.comp_outputalt="8";
+	set.comp_anal="6";
+	set.comp_output="6";
+	set.comp_outputalt="6";
 	set.diff_comp_settings=0;
 	set.lax=0;
 	set.merge=0;
 	set.minf=UINT32_MAX;
 	set.maxf=0;
 	set.md5=1;
+	set.seek=1;
 	set.mode=-1;
 	set.outperc=100;
 	set.peakset_window=26;
@@ -329,6 +336,10 @@ int main(int argc, char *argv[]){
 					goodbye("Error: Invalid --peakset-window setting\n");
 				break;
 
+			case 274:
+				set.seek=0;
+				break;
+
 			case '?':
 				goodbye("");
 				break;
@@ -344,22 +355,59 @@ int main(int argc, char *argv[]){
 	if(set.mode==-1)
 		goodbye("Error: No mode\n");
 
+	if(!set.seek && set.md5)
+		goodbye("Error: Cannot use MD5 if seek is disabled\n");
+
+	if(!blocklist_str){//valid defaults for the different modes
+		if(set.mode==3)
+			blocklist_str="1536";
+		else if(set.mode==4)
+			blocklist_str="4096";
+		else
+			blocklist_str="1152,2304,4608";
+	}
 	parse_blocksize_list(blocklist_str, &(set.blocks), &(set.blocks_count));
 	set.blocksize_min=set.blocks[0];
 	set.blocksize_max=set.blocks[set.blocks_count-1];
 
-	if(!(out_open(&out, opath)))
-		goodbye("Error: fopen() output failed\n");
-	out_write(&out, header, 42);
-
 	input=load_input(ipath, &input_size, &set);
 
 	if(!set.lax){
-		set.blocksize_limit_upper=(set.sample_rate<=48000)?4608:16384;
+		if(set.blocksize_limit_lower>((set.sample_rate<=48000)?4608:16384))
+			set.blocksize_limit_lower=(set.sample_rate<=48000)?4608:16384;
+		if(!set.blocksize_limit_upper || set.blocksize_limit_upper>((set.sample_rate<=48000)?4608:16384))
+			set.blocksize_limit_upper=(set.sample_rate<=48000)?4608:16384;
 		if(set.sample_rate<=48000)
 			set.lpc_order_limit=12;
 		set.rice_order_limit=8;
 	}
+	else if(!set.blocksize_limit_upper)
+		set.blocksize_limit_upper=65535;
+
+	if(set.mode!=4 && set.blocksize_limit_lower==set.blocksize_limit_upper)
+		goodbye("Error: Variable encode modes need a range to work with\n");
+
+	//populate header with best known information, in case seeking to update isn't possible
+	if(set.mode==4){
+		header[ 8]=(set.blocksize_min>>8)&255;
+		header[ 9]=(set.blocksize_min>>0)&255;
+		header[10]=(set.blocksize_min>>8)&255;
+		header[11]=(set.blocksize_min>>0)&255;
+	}
+	else{
+		header[ 8]=(set.blocksize_limit_lower>>8)&255;
+		header[ 9]=(set.blocksize_limit_lower>>0)&255;
+		header[10]=(set.blocksize_limit_upper>>8)&255;
+		header[11]=(set.blocksize_limit_upper>>0)&255;
+	}
+	header[18]=(set.sample_rate>>12)&255;
+	header[19]=(set.sample_rate>> 4)&255;
+	header[20]=((set.sample_rate&15)<<4)|((set.channels-1)<<1)|(((set.bps-1)>>4)&1);
+	header[21]=(((set.bps-1)&15)<<4);
+
+	if(!(out_open(&out, opath, set.seek)))
+		goodbye("Error: fopen() output failed\n");
+	out_write(&out, header, 42);
 
 	set.diff_comp_settings=strcmp(set.comp_anal, set.comp_output)!=0;
 	set.diff_comp_settings=set.diff_comp_settings?set.diff_comp_settings:(set.apod_anal && !set.apod_output);
@@ -371,33 +419,49 @@ int main(int argc, char *argv[]){
 	encoder[set.mode](input, input_size, &out, &set);
 	fprintf(stderr, "\t%s\n", ipath);
 
-	/* write finished header */
-	header[ 8]=(set.blocksize_min>>8)&255;
-	header[ 9]=(set.blocksize_min>>0)&255;
-	header[10]=(set.blocksize_max>>8)&255;
-	header[11]=(set.blocksize_max>>0)&255;
-	header[12]=(set.minf>>16)&255;
-	header[13]=(set.minf>> 8)&255;
-	header[14]=(set.minf>> 0)&255;
-	header[15]=(set.maxf>>16)&255;
-	header[16]=(set.maxf>> 8)&255;
-	header[17]=(set.maxf>> 0)&255;
-	header[18]=(set.sample_rate>>12)&255;
-	header[19]=(set.sample_rate>> 4)&255;
-	header[20]=((set.sample_rate&15)<<4)|((set.channels-1)<<1)|(((set.bps-1)>>4)&1);
-	header[21]=(((set.bps-1)&15)<<4)|((tot_samples>>32)&15);
-	header[22]=(tot_samples>>24)&255;
-	header[23]=(tot_samples>>16)&255;
-	header[24]=(tot_samples>> 8)&255;
-	header[25]=(tot_samples>> 0)&255;
-	memcpy(header+26, set.hash, 16);
+	if(set.seek){
+		/* write finished header */
+		if(set.mode!=4 && set.blocksize_min==set.blocksize_max){//rare input can appear to be fixed when it should be variable
+			if(set.blocksize_min==16){
+				header[ 8]=(set.blocksize_min>>8)&255;
+				header[ 9]=(set.blocksize_min>>0)&255;
+				header[10]=((set.blocksize_max+1)>>8)&255;
+				header[11]=((set.blocksize_max+1)>>0)&255;
+			}
+			else{
+				header[ 8]=((set.blocksize_min-1)>>8)&255;
+				header[ 9]=((set.blocksize_min-1)>>0)&255;
+				header[10]=(set.blocksize_max>>8)&255;
+				header[11]=(set.blocksize_max>>0)&255;
+			}
+		}
+		else{
+			header[ 8]=(set.blocksize_min>>8)&255;
+			header[ 9]=(set.blocksize_min>>0)&255;
+			header[10]=(set.blocksize_max>>8)&255;
+			header[11]=(set.blocksize_max>>0)&255;
+		}
+		header[12]=(set.minf>>16)&255;
+		header[13]=(set.minf>> 8)&255;
+		header[14]=(set.minf>> 0)&255;
+		header[15]=(set.maxf>>16)&255;
+		header[16]=(set.maxf>> 8)&255;
+		header[17]=(set.maxf>> 0)&255;
+		header[21]|=((tot_samples>>32)&15);
+		header[22]=(tot_samples>>24)&255;
+		header[23]=(tot_samples>>16)&255;
+		header[24]=(tot_samples>> 8)&255;
+		header[25]=(tot_samples>> 0)&255;
+		memcpy(header+26, set.hash, 16);
 
-	if(out.fout==stdout)//do this instead of a full seek implementation for typedef output
-		memcpy(out.cache, header, 42);
-	else{
-		fflush(out.fout);
-		fseek(out.fout, 0, SEEK_SET);
-		fwrite(header, 1, 42, out.fout);
+		if(out.fout==stdout)//do this instead of a full seek implementation for typedef output
+			memcpy(out.cache, header, 42);
+		else{
+			fflush(out.fout);
+			fseek(out.fout, 0, SEEK_SET);
+			fwrite(header, 1, 42, out.fout);
+		}
 	}
+
 	out_close(&out);
 }
