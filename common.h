@@ -18,6 +18,7 @@ typedef mbedtls_md5_context MD5_CTX;
 typedef struct{
 	int *blocks, diff_comp_settings, tweak, merge, mode, wildcard, outperc, queue_size, md5, lpc_order_limit, rice_order_limit, work_count, peakset_window, seek;
 	size_t blocks_count;
+	char *input_format;
 	char *comp_anal, *comp_output, *comp_outputalt, *apod_anal, *apod_output, *apod_outputalt;
 	int lax, channels, bps, sample_rate;/*flac*/
 	uint32_t minf, maxf;

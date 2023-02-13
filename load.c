@@ -136,9 +136,17 @@ static int input_fopen_flac(input *in, char *path){
 	in->input_close=input_close_flac;
 	in->dec=FLAC__stream_decoder_new();
 	FLAC__stream_decoder_set_md5_checking(in->dec, true);
-	if(FLAC__STREAM_DECODER_INIT_STATUS_OK!=(status=FLAC__stream_decoder_init_file(in->dec, path, write_callback, metadata_callback, error_callback, in))){
-		fprintf(stderr, "ERROR: initializing decoder: %s\n", FLAC__StreamDecoderInitStatusString[status]);
-		goodbye("");
+	if(strcmp(path, "-")==0){
+		if(FLAC__STREAM_DECODER_INIT_STATUS_OK!=(status=FLAC__stream_decoder_init_FILE(in->dec, stdin, write_callback, metadata_callback, error_callback, in))){
+			fprintf(stderr, "ERROR: initializing decoder: %s\n", FLAC__StreamDecoderInitStatusString[status]);
+			goodbye("");
+		}
+	}
+	else{
+		if(FLAC__STREAM_DECODER_INIT_STATUS_OK!=(status=FLAC__stream_decoder_init_file(in->dec, path, write_callback, metadata_callback, error_callback, in))){
+			fprintf(stderr, "ERROR: initializing decoder: %s\n", FLAC__StreamDecoderInitStatusString[status]);
+			goodbye("");
+		}
 	}
 
 	if(!FLAC__stream_decoder_process_until_end_of_metadata(in->dec))
@@ -150,7 +158,7 @@ int input_fopen(input *in, char *path, flac_settings *set){
 	in->set=set;
 	if(in->set->md5)
 		MD5_Init(&(in->ctx));
-	if(strlen(path)>4 && strcmp(".flac", path+strlen(path)-5)==0)
+	if((set->input_format && strcmp(set->input_format, "flac")==0) || (strlen(path)>4 && strcmp(".flac", path+strlen(path)-5)==0))
 		return input_fopen_flac(in, path);
 	return 0;
 	//else if(strlen(path)>3 && strcmp(".wav", path+strlen(path)-4)==0)

@@ -44,7 +44,9 @@ char *help=
 	"        minor efficiency loss by using a smaller queue\n"
 	"\nOptions:\n"
 	"  [I/O]\n"
-	" --in infile : Source, pipe unsupported\n"
+	" --in infile : Source. Use - to specify piping from stdin. Input format is\n"
+	"               normally determined from extension, however to pipe in the\n"
+	"               format needs to be specified with --input-format
 	" --out outfile : Destination. Use - to specify piping to stdout. By default the\n"
 	"                 output pipe caches the entire output to RAM allowing the\n"
 	"                 header to be updated before writing to pipe. Using --no-seek\n"
@@ -53,6 +55,8 @@ char *help=
 	" --no-seek : Disable seeking of the output stream, meaning the header cannot be\n"
 	"             updated at the end of the encode. Requires --no-md5 to also be set\n"
 	"             to ensure the user knows that disabling seek disables MD5\n"
+	" --input-format format : To force input to be treated as a particular format.\n"
+	"                         Valid options are: flac\n"
 	" --sample-rate num : Set sample rate for raw input\n"
 	"\n  [FLACCID settings]\n"
 	" --blocksize-list block,list : Blocksizes that a mode is allowed to use for\n"
@@ -165,6 +169,7 @@ int main(int argc, char *argv[]){
 		{"mode", required_argument, 0, 'm'},
 		{"no-md5", no_argument, 0, 271},
 		{"no-seek", no_argument, 0, 274},
+		{"input-format", required_argument, 0, 275},
 		{"out", required_argument, 0, 'o'},
 		{"output-apod", required_argument, 0, 260},
 		{"output-comp", required_argument, 0, 257},
@@ -336,6 +341,10 @@ int main(int argc, char *argv[]){
 
 			case 274:
 				set.seek=0;
+				break;
+
+			case 275:
+				set.input_format=optarg;
 				break;
 
 			case '?':
