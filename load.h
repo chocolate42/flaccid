@@ -9,6 +9,4 @@
 
 int input_fopen(input *input, char *path, flac_settings *set);
 
-size_t input_read_flac(input *in, size_t sample_cnt);
-
 #endif

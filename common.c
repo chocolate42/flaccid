@@ -4,56 +4,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-/*Implement OpenSSL MD5 API with mbedtls*/
-#ifndef USE_OPENSSL
-void MD5_Init(MD5_CTX *ctx){
-	mbedtls_md5_init(ctx);
-	mbedtls_md5_starts(ctx);
-}
-
-void MD5_Final(uint8_t *h, MD5_CTX *ctx){
-	mbedtls_md5_finish(ctx, h);
-}
-
-int MD5(const unsigned char *d, size_t s, unsigned char *h){
-	return mbedtls_md5(d, s, h);
-}
-
-int MD5_Update(MD5_CTX* ctx, const unsigned char *d, size_t s){
-	return mbedtls_md5_update(ctx, d, s);
-}
-#endif
-
-void MD5_UpdateSamples(MD5_CTX *ctx, const void *inp, size_t curr_sample, size_t sample_cnt, flac_settings *set){
-	size_t i, j, width;
-	if(set->bps==16)
-		MD5_Update(ctx, inp+(curr_sample*2*set->channels), sample_cnt*2*set->channels);
-	else if(set->bps==32)
-		MD5_Update(ctx, inp+(curr_sample*4*set->channels), sample_cnt*4*set->channels);
-	else{
-		width=set->bps==8?1:(set->bps==12?2:3);
-		for(i=0;i<sample_cnt;++i){
-			for(j=0;j<set->channels;++j)
-				MD5_Update(ctx, inp+((curr_sample+i)*4*set->channels)+(j*4), width);
-		}
-	}
-}
-
-void MD5_UpdateSamplesRelative(MD5_CTX *ctx, const void *inp, size_t sample_cnt, flac_settings *set){
-	size_t i, j, width;
-	if(set->bps==16)
-		MD5_Update(ctx, inp, sample_cnt*2*set->channels);//16
-	else if(set->bps==32)
-		MD5_Update(ctx, inp, sample_cnt*4*set->channels);//32
-	else{
-		width=set->bps==8?1:(set->bps==12?2:3);//8/12/20/24
-		for(i=0;i<sample_cnt;++i){
-			for(j=0;j<set->channels;++j)
-				MD5_Update(ctx, inp+(i*4*set->channels)+(j*4), width);
-		}
-	}
-}
-
 /*Cache output when piping and seekable to allow header to be updated*/
 int out_open(output *out, const char *pathname, int seek){
 	out->usecache = (seek && strcmp(pathname, "-")==0);
@@ -153,7 +103,7 @@ void print_settings(flac_settings *set){
 	}
 }
 
-void print_stats(stats *stat){
+void print_stats(stats *stat, input *in){
 	uint64_t anal=0, out=0, tweak=0, merge=0, i;
 	for(i=0;i<stat->work_count;++i){
 		anal+=stat->effort_anal[i];
@@ -161,7 +111,7 @@ void print_stats(stats *stat){
 		tweak+=stat->effort_tweak[i];
 		merge+=stat->effort_merge[i];
 	}
-	fprintf(stderr, "\teffort\tanalysis(%.3f);tweak(%.3f);merge(%.3f);output(%.3f)", ((double)anal)/stat->tot_samples, ((double)tweak)/stat->tot_samples, ((double)merge)/stat->tot_samples, ((double)out)/stat->tot_samples);
+	fprintf(stderr, "\teffort\tanalysis(%.3f);tweak(%.3f);merge(%.3f);output(%.3f)", ((double)anal)/in->loc_analysis, ((double)tweak)/in->loc_analysis, ((double)merge)/in->loc_analysis, ((double)out)/in->loc_analysis);
 	fprintf(stderr, "\tsize\t%zu\tcpu_time\t%.5f", stat->outsize+42, stat->cpu_time);
 }
 
@@ -180,18 +130,14 @@ static void simple_enc_encode(simple_enc *senc, flac_settings *set, input *in, u
 		stat->effort_output[omp_get_thread_num()]+=samples;
 }
 
-void simple_enc_analyse(simple_enc *senc, flac_settings *set, input *in, uint32_t samples, uint64_t curr_sample, stats *stat, MD5_CTX *ctx){
+void simple_enc_analyse(simple_enc *senc, flac_settings *set, input *in, uint32_t samples, uint64_t curr_sample, stats *stat){
 	simple_enc_encode(senc, set, in, samples, curr_sample, 1, stat);
-	//if(ctx && set->md5)roll MD5 into input handling TODO
-	//	MD5_UpdateSamples(ctx, input, curr_sample, samples, set);
 }
 
 //needs a rethink, this relies on tot-samples and we don't necessarily have it TODO
-int simple_enc_eof(queue *q, simple_enc **senc, flac_settings *set, input *in, uint64_t *curr_sample, uint64_t tot_samples, uint64_t threshold, stats *stat, MD5_CTX *ctx, output *out){
+int simple_enc_eof(queue *q, simple_enc **senc, flac_settings *set, input *in, uint64_t *curr_sample, uint64_t tot_samples, uint64_t threshold, stats *stat, output *out){
 	if((tot_samples-*curr_sample)<threshold){//EOF
 		if(tot_samples-*curr_sample){
-			//if(ctx && set->md5)roll MD5 into input handling TODO
-			//	MD5_UpdateSamples(ctx, input, *curr_sample, tot_samples-*curr_sample, set);
 			simple_enc_encode(*senc, set, in, tot_samples-*curr_sample, *curr_sample, 1, stat);//do analysis just to treat final frame the same as the rest
 			//to compile *senc=simple_enc_out(q, *senc, set, in, curr_sample, stat, out);//just add to queue, let analysis implementation flush when it deallocates queue
 		}
@@ -213,7 +159,7 @@ static size_t qmerge(queue *q, flac_settings *set, input *in, stats *stat, int i
 		return 0;
 	a=calloc(1, sizeof(simple_enc));
 	stat->effort_merge[omp_get_thread_num()]+=q->sq[i]->sample_cnt+q->sq[i+1]->sample_cnt;
-	simple_enc_analyse(a, set, in, q->sq[i]->sample_cnt+q->sq[i+1]->sample_cnt, q->sq[i]->curr_sample, NULL, NULL);
+	simple_enc_analyse(a, set, in, q->sq[i]->sample_cnt+q->sq[i+1]->sample_cnt, q->sq[i]->curr_sample, NULL);
 	if(a->outbuf_size<(q->sq[i]->outbuf_size+q->sq[i+1]->outbuf_size)){
 		(*saved)+=(q->sq[i]->outbuf_size+q->sq[i+1]->outbuf_size) - a->outbuf_size;
 		FLAC__static_encoder_delete(q->sq[i+1]->enc);//simple_enc only deletes previous if sample_cnt>0, and we're manually messing with that
@@ -289,8 +235,8 @@ static void qtweak(queue *q, flac_settings *set, input *in, stats *stat, int i, 
 	a=calloc(1, sizeof(simple_enc));
 	b=calloc(1, sizeof(simple_enc));
 	stat->effort_tweak[omp_get_thread_num()]+=q->sq[i]->sample_cnt+q->sq[i+1]->sample_cnt;
-	simple_enc_analyse(a, set, in, newsplit, q->sq[i]->curr_sample, NULL, NULL);
-	simple_enc_analyse(b, set, in, bsize, q->sq[i]->curr_sample+newsplit, NULL, NULL);
+	simple_enc_analyse(a, set, in, newsplit, q->sq[i]->curr_sample, NULL);
+	simple_enc_analyse(b, set, in, bsize, q->sq[i]->curr_sample+newsplit, NULL);
 	if((a->outbuf_size+b->outbuf_size)<(q->sq[i]->outbuf_size+q->sq[i+1]->outbuf_size)){
 		(*saved)+=((q->sq[i]->outbuf_size+q->sq[i+1]->outbuf_size) - (a->outbuf_size+b->outbuf_size));
 		simple_enc_dealloc(q->sq[i]);
@@ -414,9 +360,7 @@ void queue_dealloc(queue *q, flac_settings *set, input *in, stats *stat, output 
 	q->saved=NULL;
 }
 
-void mode_boilerplate_init(flac_settings *set, clock_t *cstart, MD5_CTX *ctx, queue *q, stats *stat){
-	//if(set->md5)roll MD5 into input handling TODO
-		//MD5_Init(ctx);
+void mode_boilerplate_init(flac_settings *set, clock_t *cstart, queue *q, stats *stat){
 	*cstart=clock();
 	stat->work_count=set->work_count;
 	stat->effort_anal=calloc(set->work_count, sizeof(uint64_t));
@@ -426,11 +370,14 @@ void mode_boilerplate_init(flac_settings *set, clock_t *cstart, MD5_CTX *ctx, qu
 	queue_alloc(q, set);
 }
 
-void mode_boilerplate_finish(flac_settings *set, clock_t *cstart, MD5_CTX *ctx, queue *q, stats *stat, input *in, output *out){
+void mode_boilerplate_finish(flac_settings *set, clock_t *cstart, queue *q, stats *stat, input *in, output *out){
 	queue_dealloc(q, set, in, stat, out);
-	//if(set->md5)roll MD5 into input handling TODO
-		//MD5_Final(set->hash, ctx);
+	in->input_close(in);
+	if(set->input_tot_samples && (set->input_tot_samples!=in->loc_analysis))
+		goodbye("Error: Samples read different from what's in the input header (check input)\n");
+	if(set->md5 && memcmp(set->input_md5, set->zero, 16)!=0 && memcmp(set->input_md5, set->hash, 16)!=0)
+		goodbye("Error: MD5 of output doesn't match what's in the input header (check input)\n");
 	stat->cpu_time=((double)(clock()-*cstart))/CLOCKS_PER_SEC;
 	print_settings(set);
-	print_stats(stat);
+	print_stats(stat, in);
 }

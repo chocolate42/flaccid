@@ -1,8 +1,40 @@
+#include "common.h"
 #include "load.h"
 
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
+
+/*Implement OpenSSL MD5 API with mbedtls*/
+#ifndef USE_OPENSSL
+static void MD5_Init(MD5_CTX *ctx){
+	mbedtls_md5_init(ctx);
+	mbedtls_md5_starts(ctx);
+}
+
+static void MD5_Final(uint8_t *h, MD5_CTX *ctx){
+	mbedtls_md5_finish(ctx, h);
+}
+
+static int MD5_Update(MD5_CTX* ctx, const unsigned char *d, size_t s){
+	return mbedtls_md5_update(ctx, d, s);
+}
+#endif
+
+static void MD5_UpdateSamplesRelative(MD5_CTX *ctx, const void *inp, size_t sample_cnt, flac_settings *set){
+	size_t i, j, width;
+	if(set->bps==16)
+		MD5_Update(ctx, inp, sample_cnt*2*set->channels);//16
+	else if(set->bps==32)
+		MD5_Update(ctx, inp, sample_cnt*4*set->channels);//32
+	else{
+		width=set->bps==8?1:(set->bps==12?2:3);//8/12/20/24
+		for(i=0;i<sample_cnt;++i){
+			for(j=0;j<set->channels;++j)
+				MD5_Update(ctx, inp+(i*4*set->channels)+(j*4), width);
+		}
+	}
+}
 
 /*Input buffer maintains all input being processed
 	Two separate processing phases, analysis and output
@@ -29,7 +61,7 @@
 
 //try and read sample_cnt samples from input, if available at least sample_cnt samples unhandled by analysis will be in the buffer
 //also shift buffer to remove samples handled by output buffer
-size_t input_read_flac(input *in, size_t sample_cnt){
+static size_t input_read_flac(input *in, size_t sample_cnt){
 	if(in->sample_cnt>=sample_cnt)
 		return in->sample_cnt;
 	//max frame is 65535, so overallocating by more means we should always have enough buffer
@@ -43,6 +75,11 @@ size_t input_read_flac(input *in, size_t sample_cnt){
 	return in->sample_cnt;
 }
 
+static void input_close_flac(input *in){
+	if(in->set->md5)
+		MD5_Final(in->set->hash, &(in->ctx));
+}
+
 //assumes alloc has been done
 static FLAC__StreamDecoderWriteStatus write_callback(const FLAC__StreamDecoder *dec, const FLAC__Frame *frame, const FLAC__int32 * const buffer[], void *client_data){
 	input *in=(input*)client_data;
@@ -50,20 +87,25 @@ static FLAC__StreamDecoderWriteStatus write_callback(const FLAC__StreamDecoder *
 	int16_t *raw16;
 	int32_t *raw32;
 	(void)dec;
-	//MD5 here TODO
 	if(in->set->bps==16){
 		raw16=in->buf;
+		raw16+=(((in->loc_analysis-in->loc_buffer)+in->sample_cnt)*in->set->channels);
 		for(i=0;i<frame->header.blocksize;++i){
 			for(j=0;j<in->set->channels;++j)
-				raw16[(((in->loc_analysis-in->loc_buffer)+in->sample_cnt)*in->set->channels)+index++]=(FLAC__int16)buffer[j][i];
+				raw16[index++]=(FLAC__int16)buffer[j][i];
 		}
+		if(in->set->md5)
+			MD5_UpdateSamplesRelative(&(in->ctx), raw16, frame->header.blocksize, in->set);
 	}
 	else{
 		raw32=in->buf;
+		raw32+=(((in->loc_analysis-in->loc_buffer)+in->sample_cnt)*in->set->channels);
 		for(i=0;i<frame->header.blocksize;++i){
 			for(j=0;j<in->set->channels;++j)
-				raw32[(((in->loc_analysis-in->loc_buffer)+in->sample_cnt)*in->set->channels)+index++]=buffer[j][i];
+				raw32[index++]=buffer[j][i];
 		}
+		if(in->set->md5)
+			MD5_UpdateSamplesRelative(&(in->ctx), raw32, frame->header.blocksize, in->set);
 	}
 	in->sample_cnt+=frame->header.blocksize;
 	return FLAC__STREAM_DECODER_WRITE_STATUS_CONTINUE;
@@ -91,6 +133,7 @@ static void error_callback(const FLAC__StreamDecoder *decoder, FLAC__StreamDecod
 static int input_fopen_flac(input *in, char *path){
 	FLAC__StreamDecoderInitStatus status;
 	in->input_read=input_read_flac;
+	in->input_close=input_close_flac;
 	in->dec=FLAC__stream_decoder_new();
 	FLAC__stream_decoder_set_md5_checking(in->dec, true);
 	if(FLAC__STREAM_DECODER_INIT_STATUS_OK!=(status=FLAC__stream_decoder_init_file(in->dec, path, write_callback, metadata_callback, error_callback, in))){
@@ -105,6 +148,8 @@ static int input_fopen_flac(input *in, char *path){
 
 int input_fopen(input *in, char *path, flac_settings *set){
 	in->set=set;
+	if(in->set->md5)
+		MD5_Init(&(in->ctx));
 	if(strlen(path)>4 && strcmp(".flac", path+strlen(path)-5)==0)
 		return input_fopen_flac(in, path);
 	return 0;

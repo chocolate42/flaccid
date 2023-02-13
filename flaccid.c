@@ -132,37 +132,6 @@ static void parse_blocksize_list(char *list, int **res, size_t *res_cnt){
 	}
 }
 
-static void hash_input(input *in, flac_settings *set){
-	MD5_CTX ctx;
-	size_t i;
-	uint8_t hash[16];
-
-	MD5_Init(&ctx);
-
-	printf("bps %u samplerate %u \n", set->bps, set->sample_rate);
-	while(in->input_read(in, 10000)>=10000){//simulate analysis
-		printf("BUFFER %zu loc_anal %zu loc_out %zu loc_buf %zu\n", in->sample_cnt, in->loc_analysis, in->loc_output, in->loc_buffer);
-		MD5_UpdateSamplesRelative(&ctx, in->buf+INLOC_ANAL, 10000, set);//analysis processing
-		in->loc_analysis+=10000;//simulate adding to queue
-		in->sample_cnt-=10000;
-		in->loc_output+=(rand()%9?9000:0);//simulate output queue being encoded
-	}
-	printf("END\n");
-	if(in->sample_cnt)//partial last chunk
-		MD5_UpdateSamplesRelative(&ctx, in->buf+INLOC_ANAL, in->sample_cnt, set);
-	in->loc_analysis+=in->sample_cnt;
-	in->loc_output=in->loc_analysis;//simulate final queue flush
-	printf("Data hashed: %zu\n", in->loc_analysis);
-	MD5_Final(hash, &ctx);
-	for(i=0;i<16;++i)
-		printf("%02x ", hash[i]);
-	printf("\n");
-	printf("Expected:\n");
-	for(i=0;i<16;++i)
-		printf("%02x ", set->input_md5[i]);
-	printf("\n");
-}
-
 int main(int argc, char *argv[]){
 	//int (*encoder[6])(void*, size_t, output*, flac_settings*)={chunk_main, gset_main, peak_main, gasc_main, fixed_main, NULL};
 	int (*encoder[6])(input*, output*, flac_settings*)={NULL, NULL, NULL, NULL, fixed_main, NULL};
@@ -403,8 +372,6 @@ int main(int argc, char *argv[]){
 	if(!input_fopen(&in, ipath, &set))
 		goodbye("Error: Failed to fopen input\n");
 
-	//hash_input(&in, &set);
-
 	if(!set.lax){
 		if(set.blocksize_limit_lower>((set.sample_rate<=48000)?4608:16384))
 			set.blocksize_limit_lower=(set.sample_rate<=48000)?4608:16384;
@@ -447,10 +414,8 @@ int main(int argc, char *argv[]){
 	set.diff_comp_settings=set.diff_comp_settings?set.diff_comp_settings:(!set.apod_anal && set.apod_output);
 	set.diff_comp_settings=set.diff_comp_settings?set.diff_comp_settings:(set.apod_anal && set.apod_output && strcmp(set.apod_anal, set.apod_output)!=0);
 
-	printf("BEGIN ENCODE\n");fflush(stdout);
 	encoder[set.mode](&in, &out, &set);
 	fprintf(stderr, "\t%s\n", ipath);
-	printf("FINISH\n");fflush(stdout);
 
 	if(set.seek){
 		//write finished header
