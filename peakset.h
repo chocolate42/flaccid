@@ -4,6 +4,6 @@
 
 #include "common.h"
 
-int peak_main(void *input, size_t input_size, output *out, flac_settings *set);
+int peak_main(input *in, output *out, flac_settings *set);
 
 #endif
