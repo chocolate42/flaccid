@@ -1,6 +1,6 @@
 #include "FLAC/stream_encoder.h"
 
-//#include "chunk.h"
+#include "chunk.h"
 #include "common.h"
 #include "fixed.h"
 #include "gasc.h"
@@ -134,7 +134,7 @@ static void parse_blocksize_list(char *list, int **res, size_t *res_cnt){
 
 int main(int argc, char *argv[]){
 	//int (*encoder[6])(void*, size_t, output*, flac_settings*)={chunk_main, gset_main, peak_main, gasc_main, fixed_main, NULL};
-	int (*encoder[6])(input*, output*, flac_settings*)={NULL, gset_main, NULL, gasc_main, fixed_main, NULL};
+	int (*encoder[6])(input*, output*, flac_settings*)={chunk_main, gset_main, NULL, gasc_main, fixed_main, NULL};
 	char *ipath=NULL, *opath=NULL;
 	input in={0};
 	output out;

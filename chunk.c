@@ -44,28 +44,26 @@ static size_t chunk_analyse(chenc *c){
 }
 
 // Write best combination of frames in correct order
-static void chunk_write(chenc *c, queue *q, flac_settings *set, void *input, uint64_t *curr_sample, stats *stat, output *out){
+static void chunk_write(chenc *c, queue *q, flac_settings *set, input *in, stats *stat, output *out){
 	if(c->use_this)
-		c->enc=simple_enc_out(q, c->enc, set, input, curr_sample, stat, out);
+		c->enc=simple_enc_out(q, c->enc, set, in, stat, out);
 	else{
 		if(c->l)
-			chunk_write(c->l, q, set, input, curr_sample, stat, out);
+			chunk_write(c->l, q, set, in, stat, out);
 		if(c->r)
-			chunk_write(c->r, q, set, input, curr_sample, stat, out);
+			chunk_write(c->r, q, set, in, stat, out);
 	}
 }
 
-int chunk_main(void *input, size_t input_size, output *out, flac_settings *set){
+int chunk_main(input *in, output *out, flac_settings *set){
 	clock_t cstart;
-	MD5_CTX ctx;
 	queue q;
 	stats stat={0};
-	uint64_t curr_sample=0;
 
 	chenc *encoder;
 	size_t i, child_index, curr_blocksize, curr_offset, encoder_cnt=2, parent_index;
 
-	mode_boilerplate_init(set, &cstart, &ctx, &q, &stat, input_size);
+	mode_boilerplate_init(set, &cstart, &q, &stat);
 
 	for(i=1;i<set->blocks_count;++i){
 		if(set->blocks[i-1]*2!=set->blocks[i])
@@ -103,17 +101,19 @@ int chunk_main(void *input, size_t input_size, output *out, flac_settings *set){
 		}
 	}
 
-	while(!simple_enc_eof(&q, &(encoder[0].enc), set, input, &curr_sample, stat.tot_samples, set->blocks[set->blocks_count-1], &stat, &ctx, out)){//if enough input, chunk
+	in->input_read(in, set->blocks[set->blocks_count-1]);
+	while(!simple_enc_eof(&q, &(encoder[0].enc), set, in, set->blocks[set->blocks_count-1], &stat, out)){//if enough input, chunk
 		#pragma omp parallel for num_threads(set->work_count)
 		for(i=0;i<encoder_cnt;++i){//encode using array for easy multithreading
-			simple_enc_analyse(encoder[i].enc, set, input, encoder[i].blocksize, curr_sample+encoder[i].offset, &stat, i?NULL:&ctx);
+			simple_enc_analyse(encoder[i].enc, set, in, encoder[i].blocksize, in->loc_analysis+encoder[i].offset, &stat);
 		}
 		#pragma omp barrier
 		chunk_analyse(encoder);
-		chunk_write(encoder, &q, set, input, &curr_sample, &stat, out);
+		chunk_write(encoder, &q, set, in, &stat, out);
+		in->input_read(in, set->blocks[set->blocks_count-1]);
 	}
 
-	mode_boilerplate_finish(set, &cstart, &ctx, &q, &stat, input, out);
+	mode_boilerplate_finish(set, &cstart, &q, &stat, in, out);
 
 	for(i=0;i<encoder_cnt;++i)
 		simple_enc_dealloc(encoder[i].enc);
