@@ -4,6 +4,6 @@
 
 #include "common.h"
 
-int gset_main(void *input, size_t input_size, output *out, flac_settings *set);
+int gset_main(input *in, output *out, flac_settings *set);
 
 #endif
