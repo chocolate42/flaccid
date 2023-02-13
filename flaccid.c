@@ -1,12 +1,12 @@
 #include "FLAC/stream_encoder.h"
 
-#include "chunk.h"
+//#include "chunk.h"
 #include "common.h"
 #include "fixed.h"
-#include "gasc.h"
-#include "gset.h"
+//#include "gasc.h"
+//#include "gset.h"
 #include "load.h"
-#include "peakset.h"
+//#include "peakset.h"
 
 #include <getopt.h>
 #include <stdlib.h>
@@ -43,7 +43,7 @@ char *help=
 	"        of 4608. Multithreaded, acts on the output queue and can be sped up at a\n"
 	"        minor efficiency loss by using a smaller queue\n"
 	"\nOptions:\n"
-	"\n  [I/O]\n"
+	"  [I/O]\n"
 	" --in infile : Source, pipe unsupported\n"
 	" --out outfile : Destination. Use - to specify piping to stdout. By default the\n"
 	"                 output pipe caches the entire output to RAM allowing the\n"
@@ -132,12 +132,43 @@ static void parse_blocksize_list(char *list, int **res, size_t *res_cnt){
 	}
 }
 
+static void hash_input(input *in, flac_settings *set){
+	MD5_CTX ctx;
+	size_t i;
+	uint8_t hash[16];
+
+	MD5_Init(&ctx);
+
+	printf("bps %u samplerate %u \n", set->bps, set->sample_rate);
+	while(in->input_read(in, 10000)>=10000){//simulate analysis
+		printf("BUFFER %zu loc_anal %zu loc_out %zu loc_buf %zu\n", in->sample_cnt, in->loc_analysis, in->loc_output, in->loc_buffer);
+		MD5_UpdateSamplesRelative(&ctx, in->buf+INLOC_ANAL, 10000, set);//analysis processing
+		in->loc_analysis+=10000;//simulate adding to queue
+		in->sample_cnt-=10000;
+		in->loc_output+=(rand()%9?9000:0);//simulate output queue being encoded
+	}
+	printf("END\n");
+	if(in->sample_cnt)//partial last chunk
+		MD5_UpdateSamplesRelative(&ctx, in->buf+INLOC_ANAL, in->sample_cnt, set);
+	in->loc_analysis+=in->sample_cnt;
+	in->loc_output=in->loc_analysis;//simulate final queue flush
+	printf("Data hashed: %zu\n", in->loc_analysis);
+	MD5_Final(hash, &ctx);
+	for(i=0;i<16;++i)
+		printf("%02x ", hash[i]);
+	printf("\n");
+	printf("Expected:\n");
+	for(i=0;i<16;++i)
+		printf("%02x ", set->input_md5[i]);
+	printf("\n");
+}
+
 int main(int argc, char *argv[]){
-	int (*encoder[6])(void*, size_t, output*, flac_settings*)={chunk_main, gset_main, peak_main, gasc_main, fixed_main, NULL};
+	//int (*encoder[6])(void*, size_t, output*, flac_settings*)={chunk_main, gset_main, peak_main, gasc_main, fixed_main, NULL};
+	int (*encoder[6])(input*, output*, flac_settings*)={NULL, NULL, NULL, NULL, fixed_main, NULL};
 	char *ipath=NULL, *opath=NULL;
+	input in={0};
 	output out;
-	void *input;
-	size_t input_size;
 	uint8_t header[42]={
 		0x66, 0x4C, 0x61, 0x43,//magic
 		0x80, 0, 0, 0x22,//streaminfo header
@@ -149,8 +180,7 @@ int main(int argc, char *argv[]){
 		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,//md5
 	};
 
-	uint64_t tot_samples;
-	flac_settings set;
+	flac_settings set={0};
 	char *blocklist_str=NULL;
 
 	int c, option_index;
@@ -370,7 +400,10 @@ int main(int argc, char *argv[]){
 	set.blocksize_min=set.blocks[0];
 	set.blocksize_max=set.blocks[set.blocks_count-1];
 
-	input=load_input(ipath, &input_size, &set);
+	if(!input_fopen(&in, ipath, &set))
+		goodbye("Error: Failed to fopen input\n");
+
+	//hash_input(&in, &set);
 
 	if(!set.lax){
 		if(set.blocksize_limit_lower>((set.sample_rate<=48000)?4608:16384))
@@ -414,13 +447,13 @@ int main(int argc, char *argv[]){
 	set.diff_comp_settings=set.diff_comp_settings?set.diff_comp_settings:(!set.apod_anal && set.apod_output);
 	set.diff_comp_settings=set.diff_comp_settings?set.diff_comp_settings:(set.apod_anal && set.apod_output && strcmp(set.apod_anal, set.apod_output)!=0);
 
-	tot_samples=input_size/(set.channels*(set.bps==16?2:4));
-
-	encoder[set.mode](input, input_size, &out, &set);
+	printf("BEGIN ENCODE\n");fflush(stdout);
+	encoder[set.mode](&in, &out, &set);
 	fprintf(stderr, "\t%s\n", ipath);
+	printf("FINISH\n");fflush(stdout);
 
 	if(set.seek){
-		/* write finished header */
+		//write finished header
 		if(set.mode!=4 && set.blocksize_min==set.blocksize_max){//rare input can appear to be fixed when it should be variable
 			if(set.blocksize_min==16){
 				header[ 8]=(set.blocksize_min>>8)&255;
@@ -447,11 +480,11 @@ int main(int argc, char *argv[]){
 		header[15]=(set.maxf>>16)&255;
 		header[16]=(set.maxf>> 8)&255;
 		header[17]=(set.maxf>> 0)&255;
-		header[21]|=((tot_samples>>32)&15);
-		header[22]=(tot_samples>>24)&255;
-		header[23]=(tot_samples>>16)&255;
-		header[24]=(tot_samples>> 8)&255;
-		header[25]=(tot_samples>> 0)&255;
+		header[21]|=((in.loc_analysis>>32)&15);
+		header[22]=(in.loc_analysis>>24)&255;
+		header[23]=(in.loc_analysis>>16)&255;
+		header[24]=(in.loc_analysis>> 8)&255;
+		header[25]=(in.loc_analysis>> 0)&255;
 		memcpy(header+26, set.hash, 16);
 
 		if(out.fout==stdout)//do this instead of a full seek implementation for typedef output

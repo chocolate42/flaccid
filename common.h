@@ -31,8 +31,8 @@ typedef struct{
 	FLAC__bool (*encode_func) (FLAC__StaticEncoder*, const void*, uint32_t, uint64_t, void*, size_t*);
 } flac_settings;
 
-void MD5_UpdateSamples(MD5_CTX *ctx, const void *input, size_t curr_sample, size_t sample_cnt, flac_settings *set);
-void MD5_UpdateSamplesRelative(MD5_CTX *ctx, const void *input, size_t sample_cnt, flac_settings *set);
+void MD5_UpdateSamples(MD5_CTX *ctx, const void *inp, size_t curr_sample, size_t sample_cnt, flac_settings *set);
+void MD5_UpdateSamplesRelative(MD5_CTX *ctx, const void *inp, size_t sample_cnt, flac_settings *set);
 
 typedef struct{
 	uint64_t *effort_anal, *effort_output, *effort_tweak, *effort_merge, tot_samples;
@@ -72,30 +72,46 @@ int out_open(output *out, const char *pathname, int seek);
 size_t out_write(output *out, const void *ptr, size_t size);
 void out_close(output *out);
 
+typedef struct input input;
+
+typedef struct input{
+	void *buf;
+	uint64_t loc_analysis;//global loc of where analysis is processing
+	uint64_t loc_output;//global loc of what has been fully processed
+	uint64_t loc_buffer;//global loc in stream that the start of input array points to
+	uint64_t sample_cnt;//local number of samples in input array available to analysis
+
+	//flac
+	FLAC__StreamDecoder *dec;
+	flac_settings *set;//flac metadata callback fills vitals in
+
+	size_t (*input_read) (input*, size_t);
+} input;
+
 /*allocate the queue*/
 void queue_alloc(queue *q, flac_settings *set);
 
 /*flush the queue then deallocate*/
-void queue_dealloc(queue *q, flac_settings *set, void *input, stats *stat, output *out);
+void queue_dealloc(queue *q, flac_settings *set, input *in, stats *stat, output *out);
 
 /*encode an analysis frame with a simple encoder instance
 Also MD5 input if context present, it is up to the analysis algorithm if and when to hash*/
-void simple_enc_analyse(simple_enc *senc, flac_settings *set, void *input, uint32_t samples, uint64_t curr_sample, stats *stat, MD5_CTX *ctx);
+void simple_enc_analyse(simple_enc *senc, flac_settings *set, input *in, uint32_t samples, uint64_t curr_sample, stats *stat, MD5_CTX *ctx);
 
 void simple_enc_dealloc(simple_enc *senc);
 
 /*Encode and output the rest of the file as a single frame with output settings if there's not enough of the file left for analysis to chew on
 Advance curr_sample if necessary*/
-int simple_enc_eof(queue *q, simple_enc **senc, flac_settings *set, void *input, uint64_t *curr_sample, uint64_t tot_samples, uint64_t threshold, stats *stat, MD5_CTX *ctx, output *out);
+int simple_enc_eof(queue *q, simple_enc **senc, flac_settings *set, input *in, uint64_t *curr_sample, uint64_t tot_samples, uint64_t threshold, stats *stat, MD5_CTX *ctx, output *out);
 
 /* Assumes the context has already done an analysis encode with the same input
 If analysis settings == output settings, add precomputed frame to output queue
 Otherwise, redo frame encode using output settings and add to queue
 Return a fresh context as the queue has taken the old one
 Advance curr_sample value*/
-simple_enc *simple_enc_out(queue *q, simple_enc *senc, flac_settings *set, void *input, uint64_t *curr_sample, stats *stat, output *out);
+simple_enc *simple_enc_out(queue *q, simple_enc *senc, flac_settings *set, input *in, stats *stat, output *out);
 
-void mode_boilerplate_init(flac_settings *set, clock_t *cstart, MD5_CTX *ctx, queue *q, stats *stat, size_t input_size);
-void mode_boilerplate_finish(flac_settings *set, clock_t *cstart, MD5_CTX *ctx, queue *q, stats *stat, void *input, output *out);
+void mode_boilerplate_init(flac_settings *set, clock_t *cstart, MD5_CTX *ctx, queue *q, stats *stat);
+void mode_boilerplate_finish(flac_settings *set, clock_t *cstart, MD5_CTX *ctx, queue *q, stats *stat, input *in, output *out);
 
 #endif
