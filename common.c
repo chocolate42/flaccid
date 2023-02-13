@@ -39,6 +39,21 @@ void MD5_UpdateSamples(MD5_CTX *ctx, const void *input, size_t curr_sample, size
 	}
 }
 
+void MD5_UpdateSamplesRelative(MD5_CTX *ctx, const void *input, size_t sample_cnt, flac_settings *set){
+	size_t i, j, width;
+	if(set->bps==16)
+		MD5_Update(ctx, input, sample_cnt*2*set->channels);//16
+	else if(set->bps==32)
+		MD5_Update(ctx, input, sample_cnt*4*set->channels);//32
+	else{
+		width=set->bps==8?1:(set->bps==12?2:3);//8/12/20/24
+		for(i=0;i<sample_cnt;++i){
+			for(j=0;j<set->channels;++j)
+				MD5_Update(ctx, input+(i*4*set->channels)+(j*4), width);
+		}
+	}
+}
+
 /*Cache output when piping and seekable to allow header to be updated*/
 int out_open(output *out, const char *pathname, int seek){
 	out->usecache = (seek && strcmp(pathname, "-")==0);
