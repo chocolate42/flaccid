@@ -134,12 +134,11 @@ void simple_enc_analyse(simple_enc *senc, flac_settings *set, input *in, uint32_
 	simple_enc_encode(senc, set, in, samples, curr_sample, 1, stat);
 }
 
-//needs a rethink, this relies on tot-samples and we don't necessarily have it TODO
-int simple_enc_eof(queue *q, simple_enc **senc, flac_settings *set, input *in, uint64_t *curr_sample, uint64_t tot_samples, uint64_t threshold, stats *stat, output *out){
-	if((tot_samples-*curr_sample)<threshold){//EOF
-		if(tot_samples-*curr_sample){
-			simple_enc_encode(*senc, set, in, tot_samples-*curr_sample, *curr_sample, 1, stat);//do analysis just to treat final frame the same as the rest
-			//to compile *senc=simple_enc_out(q, *senc, set, in, curr_sample, stat, out);//just add to queue, let analysis implementation flush when it deallocates queue
+int simple_enc_eof(queue *q, simple_enc **senc, flac_settings *set, input *in, uint64_t threshold, stats *stat, output *out){
+	if(in->sample_cnt<threshold){//EOF
+		if(in->sample_cnt){
+			simple_enc_encode(*senc, set, in, in->sample_cnt, in->loc_analysis, 1, stat);//do analysis just to treat final frame the same as the rest
+			*senc=simple_enc_out(q, *senc, set, in, stat, out);//just add to queue, let analysis implementation flush when it deallocates queue
 		}
 		return 1;
 	}

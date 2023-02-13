@@ -98,7 +98,7 @@ void simple_enc_dealloc(simple_enc *senc);
 
 /*Encode and output the rest of the file as a single frame with output settings if there's not enough of the file left for analysis to chew on
 Advance curr_sample if necessary*/
-int simple_enc_eof(queue *q, simple_enc **senc, flac_settings *set, input *in, uint64_t *curr_sample, uint64_t tot_samples, uint64_t threshold, stats *stat, output *out);
+int simple_enc_eof(queue *q, simple_enc **senc, flac_settings *set, input *in, uint64_t threshold, stats *stat, output *out);
 
 /* Assumes the context has already done an analysis encode with the same input
 If analysis settings == output settings, add precomputed frame to output queue
