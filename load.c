@@ -1,6 +1,9 @@
 #include "common.h"
 #include "load.h"
 
+#define DR_WAV_IMPLEMENTATION
+#include "dr_wav.h"
+
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
@@ -75,7 +78,7 @@ static size_t input_read_flac(input *in, size_t sample_cnt){
 	return in->sample_cnt;
 }
 
-static void input_close_flac(input *in){
+static void input_close(input *in){
 	if(in->set->md5)
 		MD5_Final(in->set->hash, &(in->ctx));
 }
@@ -133,7 +136,7 @@ static void error_callback(const FLAC__StreamDecoder *decoder, FLAC__StreamDecod
 static int input_fopen_flac(input *in, char *path){
 	FLAC__StreamDecoderInitStatus status;
 	in->input_read=input_read_flac;
-	in->input_close=input_close_flac;
+	in->input_close=input_close;
 	in->dec=FLAC__stream_decoder_new();
 	FLAC__stream_decoder_set_md5_checking(in->dec, true);
 	if(strcmp(path, "-")==0){
@@ -154,15 +157,66 @@ static int input_fopen_flac(input *in, char *path){
 	return 1;
 }
 
+static size_t input_read_wav(input *in, size_t sample_cnt){
+	int16_t *raw16;
+	int32_t *raw32;
+	size_t amount;
+	if(in->sample_cnt>=sample_cnt)
+		return in->sample_cnt;
+	//max frame is 65535, so overallocating by more means we should always have enough buffer
+	in->buf=realloc(in->buf, ((in->loc_analysis-in->loc_buffer)+sample_cnt+65536)*(in->set->bps==16?2:4)*in->set->channels);
+	if(in->set->bps==16){
+		raw16=in->buf;
+		raw16+=(((in->loc_analysis-in->loc_buffer)+in->sample_cnt)*in->set->channels);
+		amount=drwav_read_pcm_frames_s16(&(in->wav), sample_cnt-in->sample_cnt, raw16);
+		if(in->set->md5)
+			MD5_UpdateSamplesRelative(&(in->ctx), raw16, amount, in->set);
+	}
+	else{//currently broken fix TODO
+		raw32=in->buf;
+		raw32+=(((in->loc_analysis-in->loc_buffer)+in->sample_cnt)*in->set->channels);
+		amount=drwav_read_pcm_frames_s32(&(in->wav), sample_cnt-in->sample_cnt, raw32);
+		if(in->set->md5)
+			MD5_UpdateSamplesRelative(&(in->ctx), raw32, amount, in->set);
+	}
+	in->sample_cnt+=amount;
+	return in->sample_cnt;
+}
+
+static int input_fopen_wav(input *in, char *path){
+	in->input_read=input_read_wav;
+	in->input_close=input_close;
+
+	if(strcmp(path, "-")==0){
+		//drwav doesn't seem to have convenient FILE* functions
+		//so something might have to be done with raw memory
+		//TODO
+	}
+	else{
+		if(!drwav_init_file(&(in->wav), path, NULL))
+			goodbye("ERROR: initializing wav decoder\n");
+	}
+
+	in->set->sample_rate = in->wav.sampleRate;
+	in->set->channels = in->wav.channels;
+	in->set->bps = in->wav.bitsPerSample;
+	if(in->set->bps!=16)
+		goodbye("Error: Currently the only wav input support is 16 bit\n");
+	in->set->encode_func=(in->set->bps==16)?FLAC__static_encoder_process_frame_bps16_interleaved:FLAC__static_encoder_process_frame_interleaved;
+	in->set->input_tot_samples=in->wav.totalPCMFrameCount;
+
+	return 1;
+}
+
 int input_fopen(input *in, char *path, flac_settings *set){
 	in->set=set;
 	if(in->set->md5)
 		MD5_Init(&(in->ctx));
 	if((set->input_format && strcmp(set->input_format, "flac")==0) || (strlen(path)>4 && strcmp(".flac", path+strlen(path)-5)==0))
 		return input_fopen_flac(in, path);
-	return 0;
-	//else if(strlen(path)>3 && strcmp(".wav", path+strlen(path)-4)==0)
-	//	return input_fopen_wav(input, path, set);
+	else if((set->input_format && strcmp(set->input_format, "wav")==0) || (strlen(path)>3 && strcmp(".wav", path+strlen(path)-4)==0))
+		return input_fopen_wav(in, path);
 	//else
 	//	return input_fopen_raw(input, path, set);
+	return 0;
 }

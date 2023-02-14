@@ -4,6 +4,8 @@
 
 #include "FLAC/stream_encoder.h"
 
+#include "dr_wav.h"
+
 #include <inttypes.h>
 #include <omp.h>
 #include <time.h>
@@ -70,8 +72,8 @@ typedef struct input{
 	uint64_t loc_buffer;//global loc in stream that the start of input array points to
 	uint64_t sample_cnt;//local number of samples in input array available to analysis
 
-	//flac
-	FLAC__StreamDecoder *dec;
+	FLAC__StreamDecoder *dec;//flac
+	drwav wav;//wav
 	flac_settings *set;//flac metadata callback fills vitals in
 
 	MD5_CTX ctx;
