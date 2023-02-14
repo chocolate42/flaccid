@@ -46,7 +46,7 @@ char *help=
 	"  [I/O]\n"
 	" --in infile : Source. Use - to specify piping from stdin. Input format is\n"
 	"               normally determined from extension, however to pipe in the\n"
-	"               format needs to be specified with --input-format
+	"               format needs to be specified with --input-format\n"
 	" --out outfile : Destination. Use - to specify piping to stdout. By default the\n"
 	"                 output pipe caches the entire output to RAM allowing the\n"
 	"                 header to be updated before writing to pipe. Using --no-seek\n"
