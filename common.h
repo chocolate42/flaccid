@@ -74,6 +74,7 @@ typedef struct input{
 
 	FLAC__StreamDecoder *dec;//flac
 	drwav wav;//wav
+	FILE *cdda;
 	flac_settings *set;//flac metadata callback fills vitals in
 
 	MD5_CTX ctx;

@@ -136,7 +136,6 @@ static void error_callback(const FLAC__StreamDecoder *decoder, FLAC__StreamDecod
 static int input_fopen_flac(input *in, char *path){
 	FLAC__StreamDecoderInitStatus status;
 	in->input_read=input_read_flac;
-	in->input_close=input_close;
 	in->dec=FLAC__stream_decoder_new();
 	FLAC__stream_decoder_set_md5_checking(in->dec, true);
 	if(strcmp(path, "-")==0){
@@ -185,16 +184,15 @@ static size_t input_read_wav(input *in, size_t sample_cnt){
 
 static int input_fopen_wav(input *in, char *path){
 	in->input_read=input_read_wav;
-	in->input_close=input_close;
 
 	if(strcmp(path, "-")==0){
 		//drwav doesn't seem to have convenient FILE* functions
 		//so something might have to be done with raw memory
-		//TODO
+		goodbye("Error: Currently piping not supported for wav input\n");//TODO
 	}
 	else{
 		if(!drwav_init_file(&(in->wav), path, NULL))
-			goodbye("ERROR: initializing wav decoder\n");
+			goodbye("Error: initializing wav decoder\n");
 	}
 
 	in->set->sample_rate = in->wav.sampleRate;
@@ -208,15 +206,43 @@ static int input_fopen_wav(input *in, char *path){
 	return 1;
 }
 
+static size_t input_read_cdda(input *in, size_t sample_cnt){
+	size_t amount;
+	if(in->sample_cnt>=sample_cnt)
+		return in->sample_cnt;
+	//max frame is 65535, so overallocating by more means we should always have enough buffer
+	in->buf=realloc(in->buf, ((in->loc_analysis-in->loc_buffer)+sample_cnt+65536)*4);
+	amount=fread(((uint8_t*)in->buf)+(in->loc_analysis-in->loc_buffer)*4, 1, (sample_cnt-in->sample_cnt)*4, in->cdda)/4;
+	if(in->set->md5)
+		MD5_UpdateSamplesRelative(&(in->ctx), ((uint8_t*)in->buf)+(in->loc_analysis-in->loc_buffer)*4, amount, in->set);
+	in->sample_cnt+=amount;
+	return in->sample_cnt;
+}
+
+static int input_fopen_cdda(input *in, char *path){
+	in->input_read=input_read_cdda;
+	if((in->cdda=(strcmp(path, "-")==0)?stdin:fopen(path, "rb"))==NULL)
+		goodbye("Error: Failed to fopen CDDA input\n");
+
+	in->set->sample_rate = 44100;
+	in->set->channels = 2;
+	in->set->bps = 16;
+	in->set->encode_func=FLAC__static_encoder_process_frame_bps16_interleaved;
+	in->set->input_tot_samples=0;
+	return 1;
+}
+
 int input_fopen(input *in, char *path, flac_settings *set){
 	in->set=set;
+	in->input_close=input_close;
 	if(in->set->md5)
 		MD5_Init(&(in->ctx));
 	if((set->input_format && strcmp(set->input_format, "flac")==0) || (strlen(path)>4 && strcmp(".flac", path+strlen(path)-5)==0))
 		return input_fopen_flac(in, path);
 	else if((set->input_format && strcmp(set->input_format, "wav")==0) || (strlen(path)>3 && strcmp(".wav", path+strlen(path)-4)==0))
 		return input_fopen_wav(in, path);
-	//else
-	//	return input_fopen_raw(input, path, set);
+	else if((set->input_format && strcmp(set->input_format, "cdda")==0) || (strlen(path)>3 && strcmp(".bin", path+strlen(path)-4)==0))
+		return input_fopen_cdda(in, path);
+	goodbye("Error: Unknown input format, use --input-format if format cannot be determined from extension\n");
 	return 0;
 }

@@ -44,9 +44,10 @@ char *help=
 	"        minor efficiency loss by using a smaller queue\n"
 	"\nOptions:\n"
 	"  [I/O]\n"
-	" --in infile : Source. Use - to specify piping from stdin. Input format is\n"
-	"               normally determined from extension, however to pipe in the\n"
-	"               format needs to be specified with --input-format\n"
+	" --input-format format : Force input to be treated as a particular format.\n"
+	"                         Valid options are: flac wav cdda\n"
+	" --in infile : Source. Use - to specify piping from stdin. Valid extensions are\n"
+	"               .wav for wav format, .flac for flac format, .bin for raw CDDA\n"
 	" --out outfile : Destination. Use - to specify piping to stdout. By default the\n"
 	"                 output pipe caches the entire output to RAM allowing the\n"
 	"                 header to be updated before writing to pipe. Using --no-seek\n"
@@ -55,9 +56,6 @@ char *help=
 	" --no-seek : Disable seeking of the output stream, meaning the header cannot be\n"
 	"             updated at the end of the encode. Requires --no-md5 to also be set\n"
 	"             to ensure the user knows that disabling seek disables MD5\n"
-	" --input-format format : To force input to be treated as a particular format.\n"
-	"                         Valid options are: flac\n"
-	" --sample-rate num : Set sample rate for raw input\n"
 	"\n  [FLACCID settings]\n"
 	" --blocksize-list block,list : Blocksizes that a mode is allowed to use for\n"
 	"                               analysis. Different modes have different\n"
@@ -178,7 +176,6 @@ int main(int argc, char *argv[]){
 		{"outputalt-comp", required_argument, 0, 268},
 		{"peakset-window", required_argument, 0, 273},
 		{"queue", required_argument, 0, 270},
-		{"sample-rate",	required_argument, 0, 262},
 		{"tweak", required_argument, 0, 261},
 		{"workers", required_argument, 0, 'w'},
 		{"wildcard", required_argument, 0, 266},
@@ -279,10 +276,6 @@ int main(int argc, char *argv[]){
 					goodbye("Error: Invalid tweak setting\n");
 				break;
 
-			case 262:
-				set.sample_rate=atoi(optarg);
-				break;
-
 			case 263:
 				set.blocksize_limit_lower=atoi(optarg);
 				if(atoi(optarg)>65535 || atoi(optarg)<16)
@@ -345,6 +338,8 @@ int main(int argc, char *argv[]){
 
 			case 275:
 				set.input_format=optarg;
+				if(strcmp(optarg, "wav")!=0 && strcmp(optarg, "flac")!=0 && strcmp(optarg, "cdda")!=0)
+					goodbye("Error: --input-format must be one of flac/wav/cdda\n");
 				break;
 
 			case '?':
