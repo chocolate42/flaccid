@@ -82,7 +82,7 @@ int peak_main(input *in, output *out, flac_settings *set){
 	queue q;
 	stats stat={0};
 
-	simple_enc *a, **work;
+	simple_enc **work;
 	size_t effort=0, *frame_results, i, max_window_size, *running_results, *running_step, *step, this_window_size;
 
 	mode_boilerplate_init(set, &cstart, &q, &stat);
@@ -118,18 +118,12 @@ int peak_main(input *in, output *out, flac_settings *set){
 		this_window_size=(in->sample_cnt/set->blocks[0])>max_window_size?max_window_size:(in->sample_cnt/set->blocks[0]);
 		peak_window(&q, in, this_window_size, out, set, &stat, work, step, frame_results, running_results, running_step, effort);
 	}
+	simple_enc_eof(&q, work, set, in, in->sample_cnt+1, &stat, out);//partial last frame
 
 	for(i=0;i<set->work_count;++i)
 		simple_enc_dealloc(work[i]);
 	free(work);
 
-	if(in->sample_cnt){//partial frame after last window
-		a=calloc(1, sizeof(simple_enc));//reuse work instead of using a TODO
-		a->sample_cnt=in->sample_cnt;
-		a->curr_sample=in->loc_analysis;
-		a=simple_enc_out(&q, a, set, in, &stat, out);
-		simple_enc_dealloc(a);
-	}
 	mode_boilerplate_finish(set, &cstart, &q, &stat, in, out);
 	set->diff_comp_settings=set->diff_comp_settings==2?0:1;//reverse hack just in case
 	return 0;

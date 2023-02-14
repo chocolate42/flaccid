@@ -10,7 +10,7 @@ int gset_main(input *in, output *out, flac_settings *set){
 
 	double besteff, *curreff;
 	simple_enc **genc;
-	size_t best, i;
+	size_t best=0, i;
 
 	mode_boilerplate_init(set, &cstart, &q, &stat);
 
@@ -19,7 +19,7 @@ int gset_main(input *in, output *out, flac_settings *set){
 		genc[i]=calloc(1, sizeof(simple_enc));
 	curreff=malloc(sizeof(double)*set->blocks_count);
 
-	while(in->input_read(in, set->blocks[set->blocks_count-1])){
+	while(in->input_read(in, set->blocks[set->blocks_count-1])>set->blocks[0]){
 		#pragma omp parallel for num_threads(set->work_count)
 		for(i=0;i<set->blocks_count;++i){//encode all in set
 			if(set->blocks[i]<=in->sample_cnt){//if they don't overflow the input
@@ -33,20 +33,15 @@ int gset_main(input *in, output *out, flac_settings *set){
 		#pragma omp barrier
 		//find the most efficient next block
 		besteff=9998.0;
-		best=set->blocks_count;
 		for(i=0;i<set->blocks_count;++i){
 			if(curreff[i]<besteff){
 				besteff=curreff[i];
 				best=i;
 			}
 		}
-		if(best==set->blocks_count){//partial end frame
-				simple_enc_analyse(genc[0], set, in, in->sample_cnt, in->loc_analysis, &stat);
-				genc[0]=simple_enc_out(&q, genc[0], set, in, &stat, out);
-		}
-		else
-			genc[best]=simple_enc_out(&q, genc[best], set, in, &stat, out);
+		genc[best]=simple_enc_out(&q, genc[best], set, in, &stat, out);
 	}
+	simple_enc_eof(&q, genc, set, in, in->sample_cnt+1, &stat, out);//partial last frame
 
 	mode_boilerplate_finish(set, &cstart, &q, &stat, in, out);
 
