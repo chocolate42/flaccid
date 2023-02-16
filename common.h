@@ -18,7 +18,7 @@ typedef mbedtls_md5_context MD5_CTX;
 #endif
 
 typedef struct{
-	int *blocks, diff_comp_settings, tweak, merge, mode, wildcard, outperc, queue_size, md5, lpc_order_limit, rice_order_limit, work_count, peakset_window, seek;
+	int *blocks, diff_comp_settings, tweak, merge, split, mode, wildcard, outperc, queue_size, md5, lpc_order_limit, rice_order_limit, work_count, peakset_window, seek;
 	size_t blocks_count;
 	char *input_format;
 	char *comp_anal, *comp_output, *comp_outputalt, *apod_anal, *apod_output, *apod_outputalt;
@@ -32,18 +32,21 @@ typedef struct{
 } flac_settings;
 
 typedef struct{
-	uint64_t *effort_anal, *effort_output, *effort_tweak, *effort_merge;
+	uint64_t *effort_anal, *effort_output, *effort_tweak, *effort_merge, *effort_split;
 	double cpu_time;
 	size_t outsize, work_count;
 } stats;
 
 /*wrap a static encoder with its output*/
-typedef struct{
+typedef struct simple_enc simple_enc;
+struct simple_enc{
 	FLAC__StaticEncoder *enc;
 	uint8_t *outbuf;
 	size_t outbuf_size, sample_cnt;
 	uint64_t curr_sample;
-} simple_enc;
+	int has_been_split;
+	simple_enc *second_half;
+};
 
 /*output queue*/
 typedef struct{

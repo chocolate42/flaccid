@@ -104,14 +104,15 @@ void print_settings(flac_settings *set){
 }
 
 void print_stats(stats *stat, input *in){
-	uint64_t anal=0, out=0, tweak=0, merge=0, i;
+	uint64_t anal=0, out=0, tweak=0, merge=0, split=0, i;
 	for(i=0;i<stat->work_count;++i){
 		anal+=stat->effort_anal[i];
 		out+=stat->effort_output[i];
 		tweak+=stat->effort_tweak[i];
 		merge+=stat->effort_merge[i];
+		split+=stat->effort_split[i];
 	}
-	fprintf(stderr, "\teffort\tanalysis(%.3f);tweak(%.3f);merge(%.3f);output(%.3f)", ((double)anal)/in->loc_analysis, ((double)tweak)/in->loc_analysis, ((double)merge)/in->loc_analysis, ((double)out)/in->loc_analysis);
+	fprintf(stderr, "\teffort\tanalysis(%.3f);split(%.3f);tweak(%.3f);merge(%.3f);output(%.3f)", ((double)anal)/in->loc_analysis, ((double)split)/in->loc_analysis, ((double)tweak)/in->loc_analysis, ((double)merge)/in->loc_analysis, ((double)out)/in->loc_analysis);
 	fprintf(stderr, "\tsize\t%zu\tcpu_time\t%.5f", stat->outsize+42, stat->cpu_time);
 }
 
@@ -152,6 +153,8 @@ void simple_enc_dealloc(simple_enc *senc){
 
 static size_t qmerge(queue *q, flac_settings *set, input *in, stats *stat, int i, size_t *saved){
 	simple_enc *a;
+	if(q->sq[i]->has_been_split || q->sq[i+1]->has_been_split)
+		return 0;
 	if(!(q->sq[i]->sample_cnt) || !(q->sq[i+1]->sample_cnt))
 		return 0;
 	if((q->sq[i]->sample_cnt+q->sq[i+1]->sample_cnt)>set->blocksize_limit_upper)
@@ -185,8 +188,6 @@ static int senc_comp_merge(const void *aa, const void *bb){
 /*Do merge passes on queue*/
 static void queue_merge(queue *q, flac_settings *set, input *in, stats *stat){
 	size_t i, ind=0, merged=0, *saved, saved_tot;
-	if(!set->merge)
-		return;
 	saved=calloc(set->work_count, sizeof(size_t));
 	do{
 		merged=0;
@@ -223,6 +224,8 @@ static void qtweak(queue *q, flac_settings *set, input *in, stats *stat, int i, 
 	simple_enc *a, *b;
 	size_t bsize, tot=q->sq[i]->sample_cnt+q->sq[i+1]->sample_cnt;
 
+	if(q->sq[i]->has_been_split || q->sq[i+1]->has_been_split)
+		return;
 	if(newsplit<16 || newsplit>=(tot-16))
 		return;
 	if(newsplit>set->blocksize_limit_upper || newsplit<set->blocksize_limit_lower)
@@ -283,6 +286,46 @@ static void queue_tweak(queue *q, flac_settings *set, input *in, stats *stat){
 	}while(saved_tot>=set->tweak);
 }
 
+static void qsplit(queue *q, flac_settings *set, input *in, stats *stat, int i, size_t *saved){
+	simple_enc *a, *b;
+	if((q->sq[i]->sample_cnt/2)<=set->blocksize_limit_lower)
+		return;
+
+	a=calloc(1, sizeof(simple_enc));
+	b=calloc(1, sizeof(simple_enc));
+	stat->effort_split[omp_get_thread_num()]+=q->sq[i]->sample_cnt;
+	simple_enc_analyse(a, set, in, (q->sq[i]->sample_cnt/2), q->sq[i]->curr_sample, NULL);
+	simple_enc_analyse(b, set, in, q->sq[i]->sample_cnt-(q->sq[i]->sample_cnt/2), q->sq[i]->curr_sample+(q->sq[i]->sample_cnt/2), NULL);
+	if((a->outbuf_size+b->outbuf_size)<q->sq[i]->outbuf_size){
+		(*saved)+=(q->sq[i]->outbuf_size - (a->outbuf_size+b->outbuf_size));
+		simple_enc_dealloc(q->sq[i]);
+		q->sq[i]=a;
+		a->has_been_split=1;
+		a->second_half=b;
+	}
+	else{
+		simple_enc_dealloc(a);
+		simple_enc_dealloc(b);
+	}
+}
+
+static void queue_split(queue *q, flac_settings *set, input *in, stats *stat){
+	size_t i, saved_tot=0;
+	if(!set->split)
+		return;
+	for(i=0;i<set->work_count;++i)
+		q->saved[i]=0;
+	#pragma omp parallel for num_threads(set->work_count)
+	for(i=0;i<q->depth;++i){
+		if(q->sq[i]->sample_cnt==set->blocks[0])
+			qsplit(q, set, in, stat, i, &(q->saved[omp_get_thread_num()]));
+	}
+	#pragma omp barrier
+	for(i=0;i<set->work_count;++i)
+		saved_tot+=q->saved[i];
+	if(saved_tot)
+		fprintf(stderr, "split saved %zu bytes\n", saved_tot);
+}
 
 #define INLOC_OUT  ((in->set->bps==16?2:4)*in->set->channels*(in->loc_output-in->loc_buffer))
 #define INLOC_LAST ((in->set->bps==16?2:4)*in->set->channels*(in->sample_cnt+(in->loc_analysis-in->loc_buffer)))
@@ -291,6 +334,8 @@ static void simple_enc_flush(queue *q, flac_settings *set, input *in, stats *sta
 	size_t i;
 	if(!q->depth)
 		return;
+	if(set->split)
+		queue_split(q, set, in, stat);
 	if(set->merge)
 		queue_merge(q, set, in, stat);
 	if(set->tweak)
@@ -301,6 +346,11 @@ static void simple_enc_flush(queue *q, flac_settings *set, input *in, stats *sta
 			q->outstate[omp_get_thread_num()]+=set->outperc;
 			simple_enc_encode(q->sq[i], set, in, q->sq[i]->sample_cnt, q->sq[i]->curr_sample, (q->outstate[omp_get_thread_num()]>=100)?0:2, stat);
 			q->outstate[omp_get_thread_num()]%=100;
+			if(q->sq[i]->has_been_split){
+				q->outstate[omp_get_thread_num()]+=set->outperc;
+				simple_enc_encode(q->sq[i]->second_half, set, in, q->sq[i]->second_half->sample_cnt, q->sq[i]->second_half->curr_sample, (q->outstate[omp_get_thread_num()]>=100)?0:2, stat);
+				q->outstate[omp_get_thread_num()]%=100;
+			}
 		}
 		#pragma omp barrier
 	}
@@ -319,6 +369,21 @@ static void simple_enc_flush(queue *q, flac_settings *set, input *in, stats *sta
 		if(q->sq[i]->sample_cnt>set->blocksize_max)
 			set->blocksize_max=q->sq[i]->sample_cnt;
 		stat->outsize+=out_write(out, q->sq[i]->outbuf, q->sq[i]->outbuf_size);
+
+		if(q->sq[i]->has_been_split){
+			in->loc_output+=q->sq[i]->second_half->sample_cnt;
+			if(q->sq[i]->second_half->outbuf_size<set->minf)
+				set->minf=q->sq[i]->second_half->outbuf_size;
+			if(q->sq[i]->second_half->outbuf_size>set->maxf)
+				set->maxf=q->sq[i]->second_half->outbuf_size;
+			if(set->mode!=4 && q->sq[i]->second_half->sample_cnt<set->blocksize_min)
+				set->blocksize_min=q->sq[i]->second_half->sample_cnt<16?set->blocksize_min:q->sq[i]->second_half->sample_cnt;//values 0-15 are invalid per spec. This only happens for a very small last frame on variable encodes
+			if(q->sq[i]->second_half->sample_cnt>set->blocksize_max)
+				set->blocksize_max=q->sq[i]->second_half->sample_cnt;
+			stat->outsize+=out_write(out, q->sq[i]->second_half->outbuf, q->sq[i]->second_half->outbuf_size);
+			q->sq[i]->has_been_split=0;
+			simple_enc_dealloc(q->sq[i]->second_half);
+		}
 	}
 	q->depth=0;//reset
 }
@@ -366,6 +431,7 @@ void mode_boilerplate_init(flac_settings *set, clock_t *cstart, queue *q, stats 
 	stat->effort_output=calloc(set->work_count, sizeof(uint64_t));
 	stat->effort_tweak=calloc(set->work_count, sizeof(uint64_t));
 	stat->effort_merge=calloc(set->work_count, sizeof(uint64_t));
+	stat->effort_split=calloc(set->work_count, sizeof(uint64_t));
 	queue_alloc(q, set);
 }
 
@@ -373,7 +439,7 @@ void mode_boilerplate_finish(flac_settings *set, clock_t *cstart, queue *q, stat
 	queue_dealloc(q, set, in, stat, out);
 	in->input_close(in);
 	if(set->input_tot_samples && (set->input_tot_samples!=in->loc_analysis))
-		goodbye("Error: Samples read different from what's in the input header (check input)\n");
+		goodbye("Error: Sample count different from what's in the input header (check input)\n");
 	if(set->md5 && memcmp(set->input_md5, set->zero, 16)!=0 && memcmp(set->input_md5, set->hash, 16)!=0)
 		goodbye("Error: MD5 of output doesn't match what's in the input header (check input)\n");
 	stat->cpu_time=((double)(clock()-*cstart))/CLOCKS_PER_SEC;

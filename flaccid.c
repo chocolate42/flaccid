@@ -207,6 +207,7 @@ int main(int argc, char *argv[]){
 		{"preset", required_argument, 0, 276},
 		{"preset-apod", required_argument, 0, 277},
 		{"queue", required_argument, 0, 270},
+		{"split", no_argument, 0, 278},
 		{"tweak", required_argument, 0, 261},
 		{"workers", required_argument, 0, 'w'},
 		{"wildcard", required_argument, 0, 266},
@@ -238,6 +239,7 @@ int main(int argc, char *argv[]){
 	set.peakset_window=26;
 	set.queue_size=8192;
 	set.sample_rate=44100;
+	set.split=0;
 	set.tweak=0;
 	set.wildcard=0;
 	set.work_count=1;
@@ -343,8 +345,6 @@ int main(int argc, char *argv[]){
 				preset_check(&set, "--outputalt-apod");
 				set.apod_outputalt=optarg;
 				break;
-
-
 
 			case 268:
 				preset_check(&set, "--outputalt-comp");
@@ -475,6 +475,10 @@ int main(int argc, char *argv[]){
 				set.apod_output=optarg;
 				set.apod_outputalt=optarg;
 				set.apod_anal=optarg;
+				break;
+
+			case 278:
+				set.split=1;
 				break;
 
 			case '?':

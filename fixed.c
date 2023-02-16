@@ -16,6 +16,8 @@ int fixed_main(input *in, output *out, flac_settings *set){
 		goodbye("Error: Fixed blocking strategy cannot tweak\n");
 	if(set->merge)
 		goodbye("Error: Fixed blocking strategy cannot merge\n");
+	if(set->split)
+		goodbye("Error: Fixed blocking strategy cannot split\n");
 	if(set->diff_comp_settings)
 		goodbye("Error: Fixed blocking strategy cannot have different comp settings\n");
 
