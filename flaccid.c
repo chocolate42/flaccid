@@ -23,6 +23,7 @@ char *help=
 	"               .wav for wav format, .flac for flac format, .bin for raw CDDA\n"
 	" --input-format format : Force input to be treated as a particular format.\n"
 	"                         Valid options are: flac wav cdda\n"
+	" --lax : Allow non-subset settings\n"
 	" --no-md5 : Disable MD5 generation\n"
 	" --no-seek : Disable seeking of the output stream, meaning the header cannot be\n"
 	"             updated at the end of the encode. Requires --no-md5 to also be set\n"
@@ -69,7 +70,6 @@ char *help=
 	"                                If supplied this overwrites the apod settings\n"
 	"                                defined by the flac preset\n"
 	" --outputalt-comp comp_string : Alt output settings to use if outperc not 100%%\n"
-	" --lax : Allow non-subset settings\n"
 	"    [Complex flaccid settings]\n"
 	" --mode mode : Which variable-blocksize algorithm to use for analysis. Valid\n"
 	"               modes: fixed, peakset, gasc, chunk, gset\n"
@@ -369,7 +369,6 @@ int main(int argc, char *argv[]){
 				break;
 
 			case 272:
-				preset_check(&set, "--lax");
 				set.lax=1;
 				break;
 
@@ -433,7 +432,6 @@ int main(int argc, char *argv[]){
 							}
 							set.merge=0;
 							set.tweak=0;
-							set.lax=0;
 							break;
 
 						case 10:
@@ -454,7 +452,6 @@ int main(int argc, char *argv[]){
 							}
 							set.merge=0;
 							set.tweak=0;
-							set.lax=0;
 							break;
 
 						default:
