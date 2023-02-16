@@ -14,6 +14,74 @@
 
 char *help=
 	"Usage: flaccid [options]\n"
+	"\n  Note: There's two ways to define the compression settings used, either\n"
+	"  using the simple interface (--preset and possibly --preset-apod), or the\n"
+	"  complex interface (numerous settings allowing full customisation)\n"
+	"\nOptions:\n"
+	"  [General]\n"
+	" --in infile : Source. Use - to specify piping from stdin. Valid extensions are\n"
+	"               .wav for wav format, .flac for flac format, .bin for raw CDDA\n"
+	" --input-format format : Force input to be treated as a particular format.\n"
+	"                         Valid options are: flac wav cdda\n"
+	" --no-md5 : Disable MD5 generation\n"
+	" --no-seek : Disable seeking of the output stream, meaning the header cannot be\n"
+	"             updated at the end of the encode. Requires --no-md5 to also be set\n"
+	"             to ensure the user knows that disabling seek disables MD5\n"
+	" --out outfile : Destination. Use - to specify piping to stdout. By default the\n"
+	"                 output pipe caches the entire output to RAM allowing the\n"
+	"                 header to be updated before writing to pipe. Using --no-seek\n"
+	"                 allows the output pipe to write output frames as soon as they\n"
+	"                 are available\n"
+	" --peakset-window size : Maximum window size in millions of samples (default 26\n"
+	"                         for 26 million samples, ~10 minutes of 44.1KHz input).\n"
+	"                         This is settable from simple or complex interface as\n"
+	"                         it mainly allows RAM usage to be customised\n"
+	" --queue size : Number of frames in output queue (default 8192), when output\n"
+	"                queue is full it gets flushed. Tweak/merge acting on the output\n"
+	"                queue and batching of output encoding allows multithreading\n"
+	"                even if the mode used is single-threaded. This is settable from\n"
+	"                simple or complex interface as it mainly allows RAM usage to be\n"
+	"                customised\n"
+	" --workers integer : The maximum number of threads to use\n"
+	"\n  [Simple interface]\n"
+	" --preset num[extra] : A preset optionally appended with extra flac settings\n"
+	"                       (supported settings e/l/m/p/q/r see ./flac for details).\n"
+	"                       Presets 0..8 match those in .flac and use a fixed\n"
+	"                       blocking strategy (the only caveat being that -M\n"
+	"                       adaptive mid-side is not supported by flaccid, so -1 and\n"
+	"                       -4 don't enable it. Presets 9 and up use variable\n"
+	"                       blocking strategies\n"
+	" --preset-apod apod : Apodization settings to overwrite those set by preset.\n"
+	"                      A single string semi-colon delimited for multiple apod\n"
+	"                      options\n"
+	"\n [Complex interface]\n"
+	"    [Complex flac settings]\n"
+	" --analysis-apod apod_string : Apodization settings to use during analysis. If\n"
+	"                               supplied this overwrites the apod settings\n"
+	"                               defined by the flac preset\n"
+	" --analysis-comp comp_string : Compression settings to use during analysis\n"
+	" --output-apod apod_string : Apodization settings to use during output. If\n"
+	"                             supplied this overwrites the apod settings\n"
+	"                             defined by the flac preset\n"
+	" --output-comp comp_string : Compression settings to use during output\n"
+	" --outperc num : 1-100%%, frequency of normal output settings (default 100%%)\n"
+	" --outputalt-apod apod_string : Alt apod settings to use if outperc not 100%%.\n"
+	"                                If supplied this overwrites the apod settings\n"
+	"                                defined by the flac preset\n"
+	" --outputalt-comp comp_string : Alt output settings to use if outperc not 100%%\n"
+	" --lax : Allow non-subset settings\n"
+	"    [Complex flaccid settings]\n"
+	" --mode mode : Which variable-blocksize algorithm to use for analysis. Valid\n"
+	"               modes: fixed, peakset, gasc, chunk, gset\n"
+	" --blocksize-list block,list : Blocksizes that a mode is allowed to use for\n"
+	"                               analysis. Different modes have different\n"
+	"                               constraints on valid combinations\n"
+	" --blocksize-limit-lower limit : Minimum blocksize a frame can be\n"
+	" --blocksize-limit-upper limit : Maximum blocksize a frame can be\n"
+	" --merge threshold : If set enables merge passes, iterates until a pass saves\n"
+	"                     less than threshold bytes\n"
+	" --tweak threshold : If set enables tweak passes, iterates until a pass saves\n"
+	"                     less than threshold bytes\n"
 	"\nModes:\n"
 	" fixed: A fixed blocking strategy like the reference encoder. Must use only one\n"
 	"        blocksize, cannot use tweak or merge passes, analysis settings unused\n"
@@ -42,55 +110,6 @@ char *help=
 	"        unlikely to see much if any benefit as subset is limited to a blocksize\n"
 	"        of 4608. Multithreaded, acts on the output queue and can be sped up at a\n"
 	"        minor efficiency loss by using a smaller queue\n"
-	"\nOptions:\n"
-	"  [I/O]\n"
-	" --input-format format : Force input to be treated as a particular format.\n"
-	"                         Valid options are: flac wav cdda\n"
-	" --in infile : Source. Use - to specify piping from stdin. Valid extensions are\n"
-	"               .wav for wav format, .flac for flac format, .bin for raw CDDA\n"
-	" --out outfile : Destination. Use - to specify piping to stdout. By default the\n"
-	"                 output pipe caches the entire output to RAM allowing the\n"
-	"                 header to be updated before writing to pipe. Using --no-seek\n"
-	"                 allows the output pipe to write output frames as soon as they\n"
-	"                 are available\n"
-	" --no-seek : Disable seeking of the output stream, meaning the header cannot be\n"
-	"             updated at the end of the encode. Requires --no-md5 to also be set\n"
-	"             to ensure the user knows that disabling seek disables MD5\n"
-	"\n  [FLACCID settings]\n"
-	" --blocksize-list block,list : Blocksizes that a mode is allowed to use for\n"
-	"                               analysis. Different modes have different\n"
-	"                               constraints on valid combinations\n"
-	" --blocksize-limit-lower limit : Minimum blocksize a frame can be\n"
-	" --blocksize-limit-upper limit : Maximum blocksize a frame can be\n"
-	" --merge threshold : If set enables merge passes, iterates until a pass saves\n"
-	"                     less than threshold bytes\n"
-	" --mode mode : Which variable-blocksize algorithm to use for analysis. Valid\n"
-	"               modes: fixed, peakset, gasc, chunk, gset\n"
-	" --no-md5 : Disable MD5 generation\n"
-	" --peakset-window size : Maximum window size in millions of samples (default 26\n"
-	"                         for 26 million samples, ~10 minutes of 44.1KHz input)\n"
-	" --queue size : Number of frames in output queue (default 8192), when output\n"
-	"                queue is full it gets flushed. Tweak/merge acting on the output\n"
-	"                queue and batching of output encoding allows multithreading\n"
-	"                even if the mode used is single-threaded\n"
-	" --tweak threshold : If set enables tweak passes, iterates until a pass saves\n"
-	"                     less than threshold bytes\n"
-	" --workers integer : The maximum number of threads to use\n"
-	"\n  [FLAC settings]\n"
-	" --analysis-apod apod_string : Apodization settings to use during analysis. If\n"
-	"                               supplied this overwrites the apod settings\n"
-	"                               defined by the flac preset\n"
-	" --analysis-comp comp_string : Compression settings to use during analysis\n"
-	" --output-apod apod_string : Apodization settings to use during output. If\n"
-	"                             supplied this overwrites the apod settings\n"
-	"                             defined by the flac preset\n"
-	" --output-comp comp_string : Compression settings to use during output\n"
-	" --outperc num : 1-100%%, frequency of normal output settings (default 100%%)\n"
-	" --outputalt-apod apod_string : Alt apod settings to use if outperc not 100%%.\n"
-	"                                If supplied this overwrites the apod settings\n"
-	"                                defined by the flac preset\n"
-	" --outputalt-comp comp_string : Alt output settings to use if outperc not 100%%\n"
-	" --lax : Allow non-subset settings\n"
 	"\nCompression settings format:\n"
 	" * Mostly follows ./flac interface but requires settings to be in single string\n"
 	" * Compression level must be the first element\n"
@@ -134,6 +153,16 @@ static void parse_blocksize_list(char *list, int **res, size_t *res_cnt){
 	}
 }
 
+enum{MODE_CHUNK, MODE_GSET, MODE_PEAKSET, MODE_GASC, MODE_FIXED};
+enum{UI_UNDEFINED, UI_PRESET, UI_MANUAL};
+static void preset_check(flac_settings *set, char *setting){
+	if(set->ui_type==UI_PRESET){
+		fprintf(stderr, "Error: Cannot mix %s with --preset\n", setting);
+		goodbye("");
+	}
+	set->ui_type=UI_MANUAL;
+}
+
 int main(int argc, char *argv[]){
 	int (*encoder[6])(input*, output*, flac_settings*)={chunk_main, gset_main, peak_main, gasc_main, fixed_main, NULL};
 	char *ipath=NULL, *opath=NULL;
@@ -175,6 +204,8 @@ int main(int argc, char *argv[]){
 		{"outputalt-apod", required_argument, 0, 267},
 		{"outputalt-comp", required_argument, 0, 268},
 		{"peakset-window", required_argument, 0, 273},
+		{"preset", required_argument, 0, 276},
+		{"preset-apod", required_argument, 0, 277},
 		{"queue", required_argument, 0, 270},
 		{"tweak", required_argument, 0, 261},
 		{"workers", required_argument, 0, 'w'},
@@ -226,6 +257,7 @@ int main(int argc, char *argv[]){
 				break;
 
 			case 'm':
+				preset_check(&set, "--mode");
 				if(strcmp(optarg, "chunk")==0)
 					set.mode=0;
 				else if(strcmp(optarg, "gset")==0)
@@ -251,44 +283,53 @@ int main(int argc, char *argv[]){
 				break;
 
 			case 256:
+				preset_check(&set, "--analysis-comp");
 				set.comp_anal=optarg;
 				break;
 
 			case 257:
+				preset_check(&set, "--output-comp");
 				set.comp_output=optarg;
 				break;
 
 			case 258:
+				preset_check(&set, "--blocksize-list");
 				blocklist_str=optarg;
 				break;
 
 			case 259:
+				preset_check(&set, "--analysis-apod");
 				set.apod_anal=optarg;
 				break;
 
 			case 260:
+				preset_check(&set, "--output-apod");
 				set.apod_output=optarg;
 				break;
 
 			case 261:
+				preset_check(&set, "--tweak");
 				set.tweak=atoi(optarg);
 				if(atoi(optarg)<0)
 					goodbye("Error: Invalid tweak setting\n");
 				break;
 
 			case 263:
+				preset_check(&set, "--blocksize-limit-lower");
 				set.blocksize_limit_lower=atoi(optarg);
 				if(atoi(optarg)>65535 || atoi(optarg)<16)
 					goodbye("Error: Invalid lower limit blocksize\n");
 				break;
 
 			case 264:
+				preset_check(&set, "--blocksize-limit-upper");
 				set.blocksize_limit_upper=atoi(optarg);
 				if(atoi(optarg)>65535 || atoi(optarg)<16)
 					goodbye("Error: Invalid upper limit blocksize\n");
 				break;
 
 			case 265:
+				preset_check(&set, "--merge");
 				set.merge=atoi(optarg);
 				if(atoi(optarg)<0)
 					goodbye("Error: Invalid merge setting\n");
@@ -299,14 +340,19 @@ int main(int argc, char *argv[]){
 				break;
 
 			case 267:
+				preset_check(&set, "--outputalt-apod");
 				set.apod_outputalt=optarg;
 				break;
 
+
+
 			case 268:
+				preset_check(&set, "--outputalt-comp");
 				set.comp_outputalt=optarg;
 				break;
 
 			case 269:
+				preset_check(&set, "--outperc");
 				set.outperc=atoi(optarg);
 				if(atoi(optarg)<1 || atoi(optarg)>100)
 					goodbye("Error: Invalid --outperc setting (must be in integer between 1 and 100 inclusive)\n");
@@ -323,6 +369,7 @@ int main(int argc, char *argv[]){
 				break;
 
 			case 272:
+				preset_check(&set, "--lax");
 				set.lax=1;
 				break;
 
@@ -340,6 +387,96 @@ int main(int argc, char *argv[]){
 				set.input_format=optarg;
 				if(strcmp(optarg, "wav")!=0 && strcmp(optarg, "flac")!=0 && strcmp(optarg, "cdda")!=0)
 					goodbye("Error: --input-format must be one of flac/wav/cdda\n");
+				break;
+
+			case 276:
+				if(set.ui_type==UI_MANUAL)
+					goodbye("Error: Cannot mix manual settings with --preset\n");
+				set.ui_type=UI_PRESET;
+
+				if(atoi(optarg)<0)
+					goodbye("Error: Cannot have a negative preset\n");
+				if(strchr(optarg, 'M'))
+					goodbye("Error: -M is an unsupported ./flac setting\n");
+				if(atoi(optarg)<=8){
+					set.mode=MODE_FIXED;
+					if(strchr(optarg, 'b') && atoi(strchr(optarg, 'b')+1)>15){
+						blocklist_str=malloc(32);
+						sprintf(blocklist_str, "%u", atoi(strchr(optarg, 'b')+1));
+					}
+					else
+						blocklist_str="4096";
+					set.merge=0;
+					set.tweak=0;
+					set.comp_output=optarg;
+					set.comp_anal=optarg;
+				}
+				else{
+					if(strchr(optarg, 'b'))
+						goodbye("Error: -b is an unsupported ./flac setting for variable presets 9+\n");
+					switch(atoi(optarg)){
+						case 9:
+							set.mode=MODE_GASC;
+							blocklist_str="1536";
+							if(strlen(optarg)>1){
+								set.comp_anal=malloc(1+strlen(optarg));
+								set.comp_output=malloc(1+strlen(optarg));
+								strcpy(set.comp_anal, optarg);
+								strcpy(set.comp_output, optarg);
+								set.comp_anal[0]='3';
+								set.comp_output[0]='8';
+							}
+							else{
+								set.comp_anal="3m";
+								set.comp_output="8";
+							}
+							set.merge=0;
+							set.tweak=0;
+							set.lax=0;
+							break;
+
+						case 10:
+							set.mode=MODE_PEAKSET;
+							blocklist_str="1152,2304,3456,4608";
+							if(strlen(optarg)>1){
+								set.comp_anal=malloc(3+strlen(optarg));
+								set.comp_output=malloc(2+strlen(optarg));
+								strcpy(set.comp_anal, optarg);
+								strcpy(set.comp_output, optarg+1);
+								set.comp_anal[0]='3';
+								set.comp_anal[1]='m';
+								set.comp_output[0]='8';
+							}
+							else{
+								set.comp_output="8";
+								set.comp_anal="3m";
+							}
+							set.merge=0;
+							set.tweak=0;
+							set.lax=0;
+							break;
+
+						default:
+							goodbye("Error: Unknown preset\n");
+					}
+				}
+				break;
+
+			case 277:
+				if(set.ui_type==UI_MANUAL)
+					goodbye("Error: Cannot mix manual settings with --preset\n");
+				if(set.ui_type==UI_UNDEFINED){//set a default in case --preset is never defined
+					set.mode=MODE_FIXED;
+					blocklist_str="4096";
+					set.merge=0;
+					set.tweak=0;
+					set.comp_output="6";
+					set.comp_anal="6";
+				}
+				set.ui_type=UI_PRESET;
+				set.apod_output=optarg;
+				set.apod_outputalt=optarg;
+				set.apod_anal=optarg;
 				break;
 
 			case '?':
@@ -361,9 +498,9 @@ int main(int argc, char *argv[]){
 		goodbye("Error: Cannot use MD5 if seek is disabled\n");
 
 	if(!blocklist_str){//valid defaults for the different modes
-		if(set.mode==3)
+		if(set.mode==MODE_GASC)
 			blocklist_str="1536";
-		else if(set.mode==4)
+		else if(set.mode==MODE_FIXED)
 			blocklist_str="4096";
 		else
 			blocklist_str="1152,2304,4608";
@@ -387,11 +524,11 @@ int main(int argc, char *argv[]){
 	else if(!set.blocksize_limit_upper)
 		set.blocksize_limit_upper=65535;
 
-	if(set.mode!=4 && set.blocksize_limit_lower==set.blocksize_limit_upper)
+	if(set.mode!=MODE_FIXED && set.blocksize_limit_lower==set.blocksize_limit_upper)
 		goodbye("Error: Variable encode modes need a range to work with\n");
 
 	//populate header with best known information, in case seeking to update isn't possible
-	if(set.mode==4){
+	if(set.mode==MODE_FIXED){
 		header[ 8]=(set.blocksize_min>>8)&255;
 		header[ 9]=(set.blocksize_min>>0)&255;
 		header[10]=(set.blocksize_min>>8)&255;
@@ -422,7 +559,7 @@ int main(int argc, char *argv[]){
 
 	if(set.seek){
 		//write finished header
-		if(set.mode!=4 && set.blocksize_min==set.blocksize_max){//rare input can appear to be fixed when it should be variable
+		if(set.mode!=MODE_FIXED && set.blocksize_min==set.blocksize_max){//rare input can appear to be fixed when it should be variable
 			if(set.blocksize_min==16){
 				header[ 8]=(set.blocksize_min>>8)&255;
 				header[ 9]=(set.blocksize_min>>0)&255;

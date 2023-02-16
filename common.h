@@ -28,6 +28,7 @@ typedef struct{
 	uint64_t input_tot_samples;//total samples if available, probably from input flac header
 	int blocksize_min, blocksize_max, blocksize_limit_lower, blocksize_limit_upper;
 	FLAC__bool (*encode_func) (FLAC__StaticEncoder*, const void*, uint32_t, uint64_t, void*, size_t*);
+	int ui_type;
 } flac_settings;
 
 typedef struct{
