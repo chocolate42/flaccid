@@ -419,11 +419,12 @@ int main(int argc, char *argv[]){
 							set.mode=MODE_GASC;
 							blocklist_str="1536";
 							if(strlen(optarg)>1){
-								set.comp_anal=malloc(1+strlen(optarg));
+								set.comp_anal=malloc(2+strlen(optarg));
 								set.comp_output=malloc(1+strlen(optarg));
-								strcpy(set.comp_anal, optarg);
+								strcpy(set.comp_anal+1, optarg);
 								strcpy(set.comp_output, optarg);
 								set.comp_anal[0]='3';
+								set.comp_anal[1]='m';
 								set.comp_output[0]='8';
 							}
 							else{
