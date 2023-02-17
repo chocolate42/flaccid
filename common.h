@@ -28,13 +28,13 @@ typedef struct{
 	uint64_t input_tot_samples;//total samples if available, probably from input flac header
 	int blocksize_min, blocksize_max, blocksize_limit_lower, blocksize_limit_upper;
 	FLAC__bool (*encode_func) (FLAC__StaticEncoder*, const void*, uint32_t, uint64_t, void*, size_t*);
-	int ui_type;
+	int ui_type, seektable;
 } flac_settings;
 
 typedef struct{
 	uint64_t *effort_anal, *effort_output, *effort_tweak, *effort_merge;
 	double cpu_time;
-	size_t outsize, work_count;
+	size_t work_count;
 } stats;
 
 /*wrap a static encoder with its output*/
@@ -54,10 +54,25 @@ typedef struct{
 } queue;
 
 typedef struct{
+	uint64_t sample_num, offset;
+	uint16_t frame_sample_cnt;
+} seekpoint_t;
+
+typedef struct{
+	size_t seektable_loc, firstframe_loc;
+	int write_cnt;
+	seekpoint_t *set;
+	size_t cnt, alloc;
+} seektable_t;
+
+typedef struct{
 	int usecache;
 	FILE *fout;
 	uint8_t *cache;
 	size_t cache_size, cache_alloc;
+	size_t outloc;//current size of output
+	size_t sampleloc;//current samples written
+	seektable_t seektable;
 } output;
 
 int out_open(output *out, const char *pathname, int seek);
@@ -87,7 +102,7 @@ typedef struct input{
 void goodbye(char *s);
 FLAC__StaticEncoder *init_static_encoder(flac_settings *set, int blocksize, char *comp, char *apod);
 void print_settings(flac_settings *set);
-void print_stats(stats *stat, input *in);
+void print_stats(stats *stat, input *in, size_t outsize);
 
 /*allocate the queue*/
 void queue_alloc(queue *q, flac_settings *set);

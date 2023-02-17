@@ -1,4 +1,5 @@
 #include "common.h"
+#include "seektable.h"
 
 #include <assert.h>
 #include <stdlib.h>
@@ -9,28 +10,32 @@ int out_open(output *out, const char *pathname, int seek){
 	out->usecache = (seek && strcmp(pathname, "-")==0);
 	out->fout=strcmp(pathname, "-")==0?stdout:fopen(pathname, "wb+");
 	out->cache=NULL;
-	out->cache_size=0;
+	out->outloc=0;
 	out->cache_alloc=0;
 	return out->fout!=NULL;
 }
 
 size_t out_write(output *out, const void *ptr, size_t size){
+	size_t ret;
 	if(out->usecache){
-		if(size>(out->cache_alloc-out->cache_size)){
-			out->cache=realloc(out->cache, out->cache_size+size+(16ull*1048576ull));
-			out->cache_alloc=out->cache_size+size+(16ull*1048576ull);
+		if(size>(out->cache_alloc-out->outloc)){
+			out->cache=realloc(out->cache, out->outloc+size+(16ull*1048576ull));
+			out->cache_alloc=out->outloc+size+(16ull*1048576ull);
 		}
-		memcpy(out->cache+out->cache_size, ptr, size);
-		out->cache_size+=size;
+		memcpy(out->cache+out->outloc, ptr, size);
+		out->outloc+=size;
 		return size;
 	}
-	else
-		return fwrite(ptr, 1, size, out->fout);
+	else{
+		ret=fwrite(ptr, 1, size, out->fout);
+		out->outloc+=ret;
+		return ret;
+	}
 }
 
 void out_close(output *out){
 	if(out->usecache){
-		fwrite(out->cache, 1, out->cache_size, out->fout);
+		fwrite(out->cache, 1, out->outloc, out->fout);
 		free(out->cache);
 	}
 	fclose(out->fout);
@@ -103,7 +108,7 @@ void print_settings(flac_settings *set){
 	}
 }
 
-void print_stats(stats *stat, input *in){
+void print_stats(stats *stat, input *in, size_t outsize){
 	uint64_t anal=0, out=0, tweak=0, merge=0, i;
 	for(i=0;i<stat->work_count;++i){
 		anal+=stat->effort_anal[i];
@@ -112,7 +117,7 @@ void print_stats(stats *stat, input *in){
 		merge+=stat->effort_merge[i];
 	}
 	fprintf(stderr, "\teffort\tanalysis(%.3f);tweak(%.3f);merge(%.3f);output(%.3f)", ((double)anal)/in->loc_analysis, ((double)tweak)/in->loc_analysis, ((double)merge)/in->loc_analysis, ((double)out)/in->loc_analysis);
-	fprintf(stderr, "\tsize\t%zu\tcpu_time\t%.5f", stat->outsize+42, stat->cpu_time);
+	fprintf(stderr, "\tsize\t%zu\tcpu_time\t%.5f", outsize, stat->cpu_time);
 }
 
 static void simple_enc_encode(simple_enc *senc, flac_settings *set, input *in, uint32_t samples, uint64_t curr_sample, int is_anal, stats *stat){
@@ -309,6 +314,9 @@ static void simple_enc_flush(queue *q, flac_settings *set, input *in, stats *sta
 	in->loc_buffer=in->loc_output;
 
 	for(i=0;i<q->depth;++i){//dump to file
+		if(set->seektable)
+			seektable_add(&(out->seektable), out->sampleloc, out->outloc-out->seektable.firstframe_loc, q->sq[i]->sample_cnt);
+		out->sampleloc+=q->sq[i]->sample_cnt;
 		in->loc_output+=q->sq[i]->sample_cnt;
 		if(q->sq[i]->outbuf_size<set->minf)
 			set->minf=q->sq[i]->outbuf_size;
@@ -318,7 +326,7 @@ static void simple_enc_flush(queue *q, flac_settings *set, input *in, stats *sta
 			set->blocksize_min=q->sq[i]->sample_cnt<16?set->blocksize_min:q->sq[i]->sample_cnt;//values 0-15 are invalid per spec. This only happens for a very small last frame on variable encodes
 		if(q->sq[i]->sample_cnt>set->blocksize_max)
 			set->blocksize_max=q->sq[i]->sample_cnt;
-		stat->outsize+=out_write(out, q->sq[i]->outbuf, q->sq[i]->outbuf_size);
+		out_write(out, q->sq[i]->outbuf, q->sq[i]->outbuf_size);
 	}
 	q->depth=0;//reset
 }
@@ -378,5 +386,5 @@ void mode_boilerplate_finish(flac_settings *set, clock_t *cstart, queue *q, stat
 		goodbye("Error: MD5 of output doesn't match what's in the input header (check input)\n");
 	stat->cpu_time=((double)(clock()-*cstart))/CLOCKS_PER_SEC;
 	print_settings(set);
-	print_stats(stat, in);
+	print_stats(stat, in, out->outloc);
 }

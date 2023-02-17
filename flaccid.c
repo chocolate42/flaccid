@@ -7,6 +7,7 @@
 #include "gset.h"
 #include "load.h"
 #include "peakset.h"
+#include "seektable.h"
 
 #include <getopt.h>
 #include <stdlib.h>
@@ -43,6 +44,12 @@ char *help=
 	"                even if the mode used is single-threaded. This is settable from\n"
 	"                simple or complex interface as it mainly allows RAM usage to be\n"
 	"                customised\n"
+	" --seektable val : Defines if and how a seektable is generated:\n"
+	"                  -1 (default): Adapt to input if input size is known (most\n"
+	"                                flac/wav has total_sample_cnt in the header),\n"
+	"                                else use 100 seekpoints\n"
+	"                   0          : No seektable\n"
+	"                   n          : n seekpoints\n"
 	" --workers integer : The maximum number of threads to use\n"
 	"\n  [Simple interface]\n"
 	" --preset num[extra] : A preset optionally appended with extra flac settings\n"
@@ -65,11 +72,11 @@ char *help=
 	"                             supplied this overwrites the apod settings\n"
 	"                             defined by the flac preset\n"
 	" --output-comp comp_string : Compression settings to use during output\n"
-	" --outperc num : 1-100%%, frequency of normal output settings (default 100%%)\n"
-	" --outputalt-apod apod_string : Alt apod settings to use if outperc not 100%%.\n"
+	" --outperc num : 1-100%, frequency of normal output settings (default 100%)\n"
+	" --outputalt-apod apod_string : Alt apod settings to use if outperc not 100%.\n"
 	"                                If supplied this overwrites the apod settings\n"
 	"                                defined by the flac preset\n"
-	" --outputalt-comp comp_string : Alt output settings to use if outperc not 100%%\n"
+	" --outputalt-comp comp_string : Alt output settings to use if outperc not 100%\n"
 	"    [Complex flaccid settings]\n"
 	" --mode mode : Which variable-blocksize algorithm to use for analysis. Valid\n"
 	"               modes: fixed, peakset, gasc, chunk, gset\n"
@@ -165,9 +172,11 @@ static void preset_check(flac_settings *set, char *setting){
 
 int main(int argc, char *argv[]){
 	int (*encoder[6])(input*, output*, flac_settings*)={chunk_main, gset_main, peak_main, gasc_main, fixed_main, NULL};
-	char *ipath=NULL, *opath=NULL;
+	char *blocklist_str=NULL, *ipath=NULL, *opath=NULL;
+	flac_settings set={0};
 	input in={0};
-	output out;
+	output out={0};
+
 	uint8_t header[42]={
 		0x66, 0x4C, 0x61, 0x43,//magic
 		0x80, 0, 0, 0x22,//streaminfo header
@@ -178,9 +187,6 @@ int main(int argc, char *argv[]){
 		0, 0, 0, 0, //lower 32 bits of total samples
 		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,//md5
 	};
-
-	flac_settings set={0};
-	char *blocklist_str=NULL;
 
 	int c, option_index;
 	static struct option long_options[]={
@@ -207,6 +213,7 @@ int main(int argc, char *argv[]){
 		{"preset", required_argument, 0, 276},
 		{"preset-apod", required_argument, 0, 277},
 		{"queue", required_argument, 0, 270},
+		{"seektable", required_argument, 0, 278},
 		{"tweak", required_argument, 0, 261},
 		{"workers", required_argument, 0, 'w'},
 		{"wildcard", required_argument, 0, 266},
@@ -232,12 +239,13 @@ int main(int argc, char *argv[]){
 	set.minf=UINT32_MAX;
 	set.maxf=0;
 	set.md5=1;
-	set.seek=1;
 	set.mode=-1;
 	set.outperc=100;
 	set.peakset_window=26;
 	set.queue_size=8192;
 	set.sample_rate=44100;
+	set.seek=1;
+	set.seektable=-1;
 	set.tweak=0;
 	set.wildcard=0;
 	set.work_count=1;
@@ -343,8 +351,6 @@ int main(int argc, char *argv[]){
 				preset_check(&set, "--outputalt-apod");
 				set.apod_outputalt=optarg;
 				break;
-
-
 
 			case 268:
 				preset_check(&set, "--outputalt-comp");
@@ -477,6 +483,14 @@ int main(int argc, char *argv[]){
 				set.apod_anal=optarg;
 				break;
 
+			case 278:
+				set.seektable=atoi(optarg);
+				if(atoi(optarg)<-1)
+					goodbye("Error: --seektable option invalid\n");
+				if(atoi(optarg)>932067)
+					goodbye("Error: Too many seekpoints, max format can handle is 932067\n");
+				break;
+
 			case '?':
 				goodbye("");
 				break;
@@ -485,15 +499,14 @@ int main(int argc, char *argv[]){
 
 	if(!ipath)
 		goodbye("Error: No input\n");
-
-	if(!opath)/* Add test option with no output TODO */
+	if(!opath)
 		goodbye("Error: No output\n");
-
 	if(set.mode==-1)
-		goodbye("Error: No mode\n");
-
+		goodbye("Error: No mode set, either set a mode manually or choose a preset\n");
 	if(!set.seek && set.md5)
 		goodbye("Error: Cannot use MD5 if seek is disabled\n");
+	if(set.seektable!=0 && !set.seek)
+		goodbye("Error: Cannot add a seektable if seek is disabled\n");
 
 	if(!blocklist_str){//valid defaults for the different modes
 		if(set.mode==MODE_GASC)
@@ -545,7 +558,11 @@ int main(int argc, char *argv[]){
 
 	if(!(out_open(&out, opath, set.seek)))
 		goodbye("Error: fopen() output failed\n");
+	seektable_init(&(out.seektable), &set, header);//do before writing header, it may change header
+	//preserved metadata should have been determined by this point, it may change header
 	out_write(&out, header, 42);
+	//optionally write preserved metadata TODO
+	seektable_write_dummy(&(out.seektable), &set, &out);
 
 	set.diff_comp_settings=strcmp(set.comp_anal, set.comp_output)!=0;
 	set.diff_comp_settings=set.diff_comp_settings?set.diff_comp_settings:(set.apod_anal && !set.apod_output);
@@ -590,7 +607,7 @@ int main(int argc, char *argv[]){
 		header[25]=(in.loc_analysis>> 0)&255;
 		memcpy(header+26, set.hash, 16);
 
-		if(out.fout==stdout)//do this instead of a full seek implementation for typedef output
+		if(out.fout==stdout)//instead of full seek implementation for typedef output
 			memcpy(out.cache, header, 42);
 		else{
 			fflush(out.fout);
@@ -598,6 +615,8 @@ int main(int argc, char *argv[]){
 			fwrite(header, 1, 42, out.fout);
 		}
 	}
+
+	seektable_write(&(out.seektable), &out);
 
 	out_close(&out);
 }
