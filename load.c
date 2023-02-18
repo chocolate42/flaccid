@@ -1,5 +1,6 @@
 #include "common.h"
 #include "load.h"
+#include "seektable.h"
 
 #define DR_WAV_IMPLEMENTATION
 #include "dr_wav.h"
@@ -114,8 +115,57 @@ static FLAC__StreamDecoderWriteStatus write_callback(const FLAC__StreamDecoder *
 	return FLAC__STREAM_DECODER_WRITE_STATUS_CONTINUE;
 }
 
+static size_t bwrite_u24be(uint64_t n, uint8_t *data){
+	data[2]=(n    )&255;
+	data[1]=(n>> 8)&255;
+	data[0]=(n>>16)&255;
+	return 3;
+}
+static size_t bwrite_u32be(uint64_t n, uint8_t *data){
+	data[3]=(n    )&255;
+	data[2]=(n>> 8)&255;
+	data[1]=(n>>16)&255;
+	data[0]=(n>>24)&255;
+	return 4;
+}
+static size_t out_write_u32be(uint64_t n, output *out){
+	uint8_t d[4];
+	bwrite_u32be(n, d);
+	return out_write(out, d, 4);
+}
+static size_t bwrite_u64be(uint64_t n, uint8_t *data){
+	data[7]=n&255;
+	data[6]=(n>>8)&255;
+	data[5]=(n>>16)&255;
+	data[4]=(n>>24)&255;
+	data[3]=(n>>32)&255;
+	data[2]=(n>>40)&255;
+	data[1]=(n>>48)&255;
+	data[0]=(n>>56)&255;
+	return 8;
+}
+static size_t out_write_u64be(uint64_t n, output *out){
+	uint8_t d[8];
+	bwrite_u64be(n, d);
+	return out_write(out, d, 8);
+}
+static size_t bwrite_u32le(uint64_t n, uint8_t *data){
+	data[0]=(n    )&255;
+	data[1]=(n>> 8)&255;
+	data[2]=(n>>16)&255;
+	data[3]=(n>>24)&255;
+	return 4;
+}
+static size_t out_write_u32le(uint64_t n, output *out){
+	uint8_t d[4];
+	bwrite_u32le(n, d);
+	return out_write(out, d, 4);
+}
+
 static void metadata_callback(const FLAC__StreamDecoder *dec, const FLAC__StreamMetadata *metadata, void *client_data){
 	input *in=(input*)client_data;
+	size_t i, j, written=0;
+	uint8_t head[4], lastpad[4]={0x81, 0, 0, 0}, scratch[259];
 	(void)dec;
 	if(metadata->type==FLAC__METADATA_TYPE_STREAMINFO){
 		in->set->sample_rate = metadata->data.stream_info.sample_rate;
@@ -124,6 +174,100 @@ static void metadata_callback(const FLAC__StreamDecoder *dec, const FLAC__Stream
 		in->set->encode_func=(in->set->bps==16)?FLAC__static_encoder_process_frame_bps16_interleaved:FLAC__static_encoder_process_frame_interleaved;
 		in->set->input_tot_samples=metadata->data.stream_info.total_samples;
 		memcpy(in->set->input_md5, metadata->data.stream_info.md5sum, 16);
+		if(metadata->is_last)//let prepare_io know there's nothing to potentially preserve
+			in->out->blocktype_containing_islast_flag=LAST_HEADER;
+		return;
+	}
+	else if(!(in->set->preserve_flac_metadata))
+		return;
+
+	head[0]=(metadata->is_last?0x80:0)|metadata->type;//header is_last and type
+	bwrite_u24be(metadata->length, head+1);//metadata header length
+	switch(metadata->type){//preserve
+	case FLAC__METADATA_TYPE_PADDING:
+		if(metadata->is_last)
+			out_write(in->out, lastpad, 4);
+		break;
+
+	case FLAC__METADATA_TYPE_APPLICATION://preserve
+		if(metadata->length<4)
+			goodbye("Error: APPLICATION metadata too short to be valid\n");
+		written+=out_write(in->out, head, 4);
+		written+=out_write(in->out, metadata->data.application.id, 4);
+		if(metadata->length>4)
+			written+=out_write(in->out, metadata->data.application.data, metadata->length-4);
+		assert(written==(metadata->length+4));
+		break;
+
+	case FLAC__METADATA_TYPE_SEEKTABLE:
+		if(metadata->is_last)
+			out_write(in->out, lastpad, 4);
+		break;
+
+	case FLAC__METADATA_TYPE_VORBIS_COMMENT://preserve
+		written+=out_write(in->out, head, 4);
+		written+=out_write_u32le(metadata->data.vorbis_comment.vendor_string.length, in->out);
+		written+=out_write(in->out, metadata->data.vorbis_comment.vendor_string.entry, metadata->data.vorbis_comment.vendor_string.length);
+		written+=out_write_u32le(metadata->data.vorbis_comment.num_comments, in->out);
+		for(i=0;i<metadata->data.vorbis_comment.num_comments;++i){
+			written+=out_write_u32le(metadata->data.vorbis_comment.comments[i].length, in->out);
+			written+=out_write(in->out, metadata->data.vorbis_comment.comments[i].entry, metadata->data.vorbis_comment.comments[i].length);
+		}
+		assert(written==(metadata->length+4));
+		break;
+
+	case FLAC__METADATA_TYPE_CUESHEET://preserve
+		written+=out_write(in->out, head, 4);
+		written+=out_write(in->out, metadata->data.cue_sheet.media_catalog_number, 128);
+		written+=out_write_u64be(metadata->data.cue_sheet.lead_in, in->out);
+		memset(scratch, 0, 259);
+		scratch[0]|=(metadata->data.cue_sheet.is_cd)?0x80:0;
+		written+=out_write(in->out, scratch, 259);
+		scratch[0]=(metadata->data.cue_sheet.num_tracks)&255;
+		written+=out_write(in->out, scratch, 1);
+		for(i=0;i<metadata->data.cue_sheet.num_tracks;++i){
+			written+=out_write_u64be(metadata->data.cue_sheet.tracks[i].offset, in->out);
+			written+=out_write(in->out, &(metadata->data.cue_sheet.tracks[i].number), 1);
+			written+=out_write(in->out, metadata->data.cue_sheet.tracks[i].isrc, 12);
+			scratch[0]=(metadata->data.cue_sheet.tracks[i].type<<7)|(metadata->data.cue_sheet.tracks[i].pre_emphasis<<6);
+			memset(scratch+1, 0, 13);
+			written+=out_write(in->out, scratch, 14);
+			written+=out_write(in->out, &(metadata->data.cue_sheet.tracks[i].num_indices), 1);
+			memset(scratch, 0, 3);
+			for(j=0;j<metadata->data.cue_sheet.tracks[i].num_indices;++j){
+				written+=out_write_u64be(metadata->data.cue_sheet.tracks[i].indices[j].offset, in->out);
+				written+=out_write(in->out, &(metadata->data.cue_sheet.tracks[i].indices[j].number), 1);
+				written+=out_write(in->out, scratch, 3);
+			}
+		}
+		assert(written==(metadata->length+4));
+		break;
+
+	case FLAC__METADATA_TYPE_PICTURE://preserve
+		written+=out_write(in->out, head, 4);
+		written+=out_write_u32be(metadata->data.picture.type, in->out);
+		written+=out_write_u32be(strlen(metadata->data.picture.mime_type), in->out);
+		written+=out_write(in->out, metadata->data.picture.mime_type, strlen(metadata->data.picture.mime_type));
+		written+=out_write_u32be(strlen((char*)metadata->data.picture.description), in->out);
+		written+=out_write(in->out, metadata->data.picture.description, strlen((char*)metadata->data.picture.description));
+		written+=out_write_u32be(metadata->data.picture.width, in->out);
+		written+=out_write_u32be(metadata->data.picture.height, in->out);
+		written+=out_write_u32be(metadata->data.picture.depth, in->out);
+		written+=out_write_u32be(metadata->data.picture.colors, in->out);
+		written+=out_write_u32be(metadata->data.picture.data_length, in->out);
+		written+=out_write(in->out, metadata->data.picture.data, metadata->data.picture.data_length);
+		assert(written==(metadata->length+4));
+		break;
+
+	case FLAC__METADATA_TYPE_UNDEFINED://preserve
+		written+=out_write(in->out, head, 4);
+		if(metadata->length)
+			written+=out_write(in->out, metadata->data.unknown.data, metadata->length);
+		assert(written==(metadata->length+4));
+		break;
+
+	default:
+		goodbye("Error: Unknown metadata type when preservation enabled\n");
 	}
 }
 
@@ -133,11 +277,13 @@ static void error_callback(const FLAC__StreamDecoder *decoder, FLAC__StreamDecod
 	goodbye("");
 }
 
-static int input_fopen_flac(input *in, char *path){
+static int input_fopen_flac_init(input *in, char *path){
 	FLAC__StreamDecoderInitStatus status;
 	in->input_read=input_read_flac;
 	in->dec=FLAC__stream_decoder_new();
 	FLAC__stream_decoder_set_md5_checking(in->dec, true);
+	if(in->set->preserve_flac_metadata)
+		FLAC__stream_decoder_set_metadata_respond_all(in->dec);
 	if(strcmp(path, "-")==0){
 		if(FLAC__STREAM_DECODER_INIT_STATUS_OK!=(status=FLAC__stream_decoder_init_FILE(in->dec, stdin, write_callback, metadata_callback, error_callback, in))){
 			fprintf(stderr, "ERROR: initializing decoder: %s\n", FLAC__StreamDecoderInitStatusString[status]);
@@ -151,8 +297,8 @@ static int input_fopen_flac(input *in, char *path){
 		}
 	}
 
-	if(!FLAC__stream_decoder_process_until_end_of_metadata(in->dec))
-		goodbye("Error: Failed to read flac input metadata\n");
+	if(!FLAC__stream_decoder_process_single(in->dec))
+		goodbye("Error: Failed to read flac input STREAMINFO\n");
 	return 1;
 }
 
@@ -238,11 +384,83 @@ int input_fopen(input *in, char *path, flac_settings *set){
 	if(in->set->md5)
 		MD5_Init(&(in->ctx));
 	if((set->input_format && strcmp(set->input_format, "flac")==0) || (strlen(path)>4 && strcmp(".flac", path+strlen(path)-5)==0))
-		return input_fopen_flac(in, path);
+		return input_fopen_flac_init(in, path);
 	else if((set->input_format && strcmp(set->input_format, "wav")==0) || (strlen(path)>3 && strcmp(".wav", path+strlen(path)-4)==0))
 		return input_fopen_wav(in, path);
 	else if((set->input_format && strcmp(set->input_format, "cdda")==0) || (strlen(path)>3 && strcmp(".bin", path+strlen(path)-4)==0))
 		return input_fopen_cdda(in, path);
 	goodbye("Error: Unknown input format, use --input-format if format cannot be determined from extension\n");
 	return 0;
+}
+
+/* all-in-wonder function that handles all I/O to the point of being ready to encode frames
+
+	* Opens output for writing
+	* Opens input for reading
+	* Sizes output seektable based on input metadata, if seektable used
+	* Optionally Preserves flac input metadata
+	* Writes all that making sure the is_last flag is set only for the last written metadata block,
+	  which could be the header, the seektable or the last preserved block
+	  Because we write preserved blocks as encountered, the last block in
+	  input may not be something to preserve, so an ampty padding block is added
+*/
+void prepare_io(input *in, char *ipath, output *out, char *opath, uint8_t *header, flac_settings *set){
+	//open output for writing
+	if(!(out_open(out, opath, set->seek)))
+		goodbye("Error: Failed to open output\n");
+	in->out=out;
+	//open input for reading
+	if(!input_fopen(in, ipath, set))
+		goodbye("Error: Failed to open input\n");
+	//change subset based on input samplerate
+	if(!set->lax){
+		if(set->blocksize_limit_lower>((set->sample_rate<=48000)?4608:16384))
+			set->blocksize_limit_lower=(set->sample_rate<=48000)?4608:16384;
+		if(!set->blocksize_limit_upper || set->blocksize_limit_upper>((set->sample_rate<=48000)?4608:16384))
+			set->blocksize_limit_upper=(set->sample_rate<=48000)?4608:16384;
+		if(set->sample_rate<=48000)
+			set->lpc_order_limit=12;
+		set->rice_order_limit=8;
+	}
+	else if(!set->blocksize_limit_upper)
+		set->blocksize_limit_upper=65535;
+	if(set->mode!=MODE_FIXED && set->blocksize_limit_lower==set->blocksize_limit_upper)
+		goodbye("Error: Variable encode modes need a range to work with\n");
+	//populate header with best known information, in case seeking to update isn't possible
+	if(set->mode==MODE_FIXED){
+		header[ 8]=(set->blocksize_min>>8)&255;
+		header[ 9]=(set->blocksize_min>>0)&255;
+		header[10]=(set->blocksize_min>>8)&255;
+		header[11]=(set->blocksize_min>>0)&255;
+	}
+	else{
+		header[ 8]=(set->blocksize_limit_lower>>8)&255;
+		header[ 9]=(set->blocksize_limit_lower>>0)&255;
+		header[10]=(set->blocksize_limit_upper>>8)&255;
+		header[11]=(set->blocksize_limit_upper>>0)&255;
+	}
+	header[18]=(set->sample_rate>>12)&255;
+	header[19]=(set->sample_rate>> 4)&255;
+	header[20]=((set->sample_rate&15)<<4)|((set->channels-1)<<1)|(((set->bps-1)>>4)&1);
+	header[21]=(((set->bps-1)&15)<<4);
+	//determine seektable size
+	seektable_init(&(out->seektable), set);//between ihead read ohead write
+	//determine which blocktype is last
+	if((out->blocktype_containing_islast_flag==LAST_UNDEFINED)//more than just STREAMINFO
+		&& in->dec && set->preserve_flac_metadata)//preserve
+		out->blocktype_containing_islast_flag=LAST_PRESERVED;
+	else
+		out->blocktype_containing_islast_flag=(set->seektable!=0)?LAST_SEEKTABLE:LAST_HEADER;
+	//write header
+	if(out->blocktype_containing_islast_flag==LAST_HEADER)
+		header[4]|=0x80;
+	out_write(out, header, 42);
+	//write seektable if applicable
+	seektable_write_dummy(&(out->seektable), set, out);
+	//finish reading flac input metadata, preserving is done in metadata callback
+	if(in->dec){//flac input
+		if(!FLAC__stream_decoder_process_until_end_of_metadata(in->dec))
+			goodbye("Error: Failed to read flac input metadata\n");
+	}
+	out->seektable.firstframe_loc=out->outloc;
 }

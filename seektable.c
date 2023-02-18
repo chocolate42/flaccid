@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-void seektable_init(seektable_t *seektable, flac_settings *set, uint8_t *header){
+void seektable_init(seektable_t *seektable, flac_settings *set){
 	size_t seconds;
 	if(set->seektable!=0){
 		if(set->seektable==-1 && set->input_tot_samples){//we know sample count from input
@@ -26,8 +26,6 @@ void seektable_init(seektable_t *seektable, flac_settings *set, uint8_t *header)
 			set->seektable=(set->input_tot_samples/set->blocks[0]);
 		}
 	}
-	if(set->seektable!=0)//may have changed
-		header[4]-=(header[4]>=0x80)?0x80:0;//streaminfo not last metadata block
 	seektable->write_cnt=set->seektable;
 }
 
@@ -51,9 +49,11 @@ void seektable_add(seektable_t *seektable, uint64_t sample_num, uint64_t offset,
 
 void seektable_write_dummy(seektable_t *seektable, flac_settings *set, output *out){
 	size_t i;
-	uint8_t mhead[4]={0x83, 0, 0, 0};//seektable is last metadata block
+	uint8_t mhead[4]={0x03, 0, 0, 0};
 	uint8_t dummy[18]={255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 	if(set->seektable){
+		if(out->blocktype_containing_islast_flag==LAST_SEEKTABLE)
+			mhead[0]|=0x80;
 		mhead[1]=((18*set->seektable)>>16)&255;
 		mhead[2]=((18*set->seektable)>> 8)&255;
 		mhead[3]=((18*set->seektable)    )&255;
@@ -61,7 +61,6 @@ void seektable_write_dummy(seektable_t *seektable, flac_settings *set, output *o
 		seektable->seektable_loc=out->outloc;
 		for(i=0;i<set->seektable;++i)
 			out_write(out, dummy, 18);
-		seektable->firstframe_loc=out->outloc;
 	}
 }
 

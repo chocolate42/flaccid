@@ -17,6 +17,10 @@
 typedef mbedtls_md5_context MD5_CTX;
 #endif
 
+enum{LAST_UNDEFINED, LAST_HEADER, LAST_SEEKTABLE, LAST_PRESERVED};
+enum{MODE_CHUNK, MODE_GSET, MODE_PEAKSET, MODE_GASC, MODE_FIXED};
+enum{UI_UNDEFINED, UI_PRESET, UI_MANUAL};
+
 typedef struct{
 	int *blocks, diff_comp_settings, tweak, merge, mode, wildcard, outperc, queue_size, md5, lpc_order_limit, rice_order_limit, work_count, peakset_window, seek;
 	size_t blocks_count;
@@ -28,7 +32,7 @@ typedef struct{
 	uint64_t input_tot_samples;//total samples if available, probably from input flac header
 	int blocksize_min, blocksize_max, blocksize_limit_lower, blocksize_limit_upper;
 	FLAC__bool (*encode_func) (FLAC__StaticEncoder*, const void*, uint32_t, uint64_t, void*, size_t*);
-	int ui_type, seektable;
+	int ui_type, seektable, preserve_flac_metadata;
 } flac_settings;
 
 typedef struct{
@@ -73,6 +77,7 @@ typedef struct{
 	size_t outloc;//current size of output
 	size_t sampleloc;//current samples written
 	seektable_t seektable;
+	int blocktype_containing_islast_flag;
 } output;
 
 int out_open(output *out, const char *pathname, int seek);
@@ -91,12 +96,15 @@ typedef struct input{
 	FLAC__StreamDecoder *dec;//flac
 	drwav wav;//wav
 	FILE *cdda;
-	flac_settings *set;//flac metadata callback fills vitals in
 
-	MD5_CTX ctx;
+	flac_settings *set;//flac/wav fills vitals in
+	output *out;//when preserving flac input metadata it's done in the metadata callback
 
-	size_t (*input_read) (input*, size_t);
-	void (*input_close) (input*);
+	MD5_CTX ctx;//hash as input read
+
+	size_t (*input_read) (input*, size_t);//function to read more input
+	void (*input_close) (input*);//function to close input
+
 } input;
 
 void goodbye(char *s);

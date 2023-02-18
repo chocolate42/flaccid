@@ -38,6 +38,7 @@ char *help=
 	"                         for 26 million samples, ~10 minutes of 44.1KHz input).\n"
 	"                         This is settable from simple or complex interface as\n"
 	"                         it mainly allows RAM usage to be customised\n"
+	" --preserve-flac-metadata: Preserve metadata from flac input, excluding padding\n"
 	" --queue size : Number of frames in output queue (default 8192), when output\n"
 	"                queue is full it gets flushed. Tweak/merge acting on the output\n"
 	"                queue and batching of output encoding allows multithreading\n"
@@ -160,8 +161,6 @@ static void parse_blocksize_list(char *list, int **res, size_t *res_cnt){
 	}
 }
 
-enum{MODE_CHUNK, MODE_GSET, MODE_PEAKSET, MODE_GASC, MODE_FIXED};
-enum{UI_UNDEFINED, UI_PRESET, UI_MANUAL};
 static void preset_check(flac_settings *set, char *setting){
 	if(set->ui_type==UI_PRESET){
 		fprintf(stderr, "Error: Cannot mix %s with --preset\n", setting);
@@ -179,7 +178,7 @@ int main(int argc, char *argv[]){
 
 	uint8_t header[42]={
 		0x66, 0x4C, 0x61, 0x43,//magic
-		0x80, 0, 0, 0x22,//streaminfo header
+		0x00, 0, 0, 0x22,//streaminfo header
 		0, 0, 0, 0,//min/max blocksize TBD
 		0, 0, 0, 0, 0, 0,//min/max frame size TBD
 		0x0a, 0xc4, 0x42,//44.1khz, 2 channel
@@ -210,6 +209,7 @@ int main(int argc, char *argv[]){
 		{"outputalt-apod", required_argument, 0, 267},
 		{"outputalt-comp", required_argument, 0, 268},
 		{"peakset-window", required_argument, 0, 273},
+		{"preserve-flac-metadata", no_argument, 0, 279},
 		{"preset", required_argument, 0, 276},
 		{"preset-apod", required_argument, 0, 277},
 		{"queue", required_argument, 0, 270},
@@ -242,6 +242,7 @@ int main(int argc, char *argv[]){
 	set.mode=-1;
 	set.outperc=100;
 	set.peakset_window=26;
+	set.preserve_flac_metadata=0;
 	set.queue_size=8192;
 	set.sample_rate=44100;
 	set.seek=1;
@@ -491,6 +492,10 @@ int main(int argc, char *argv[]){
 					goodbye("Error: Too many seekpoints, max format can handle is 932067\n");
 				break;
 
+			case 279:
+				set.preserve_flac_metadata=1;
+				break;
+
 			case '?':
 				goodbye("");
 				break;
@@ -520,49 +525,7 @@ int main(int argc, char *argv[]){
 	set.blocksize_min=set.blocks[0];
 	set.blocksize_max=set.blocks[set.blocks_count-1];
 
-	if(!input_fopen(&in, ipath, &set))
-		goodbye("Error: Failed to fopen input\n");
-
-	if(!set.lax){
-		if(set.blocksize_limit_lower>((set.sample_rate<=48000)?4608:16384))
-			set.blocksize_limit_lower=(set.sample_rate<=48000)?4608:16384;
-		if(!set.blocksize_limit_upper || set.blocksize_limit_upper>((set.sample_rate<=48000)?4608:16384))
-			set.blocksize_limit_upper=(set.sample_rate<=48000)?4608:16384;
-		if(set.sample_rate<=48000)
-			set.lpc_order_limit=12;
-		set.rice_order_limit=8;
-	}
-	else if(!set.blocksize_limit_upper)
-		set.blocksize_limit_upper=65535;
-
-	if(set.mode!=MODE_FIXED && set.blocksize_limit_lower==set.blocksize_limit_upper)
-		goodbye("Error: Variable encode modes need a range to work with\n");
-
-	//populate header with best known information, in case seeking to update isn't possible
-	if(set.mode==MODE_FIXED){
-		header[ 8]=(set.blocksize_min>>8)&255;
-		header[ 9]=(set.blocksize_min>>0)&255;
-		header[10]=(set.blocksize_min>>8)&255;
-		header[11]=(set.blocksize_min>>0)&255;
-	}
-	else{
-		header[ 8]=(set.blocksize_limit_lower>>8)&255;
-		header[ 9]=(set.blocksize_limit_lower>>0)&255;
-		header[10]=(set.blocksize_limit_upper>>8)&255;
-		header[11]=(set.blocksize_limit_upper>>0)&255;
-	}
-	header[18]=(set.sample_rate>>12)&255;
-	header[19]=(set.sample_rate>> 4)&255;
-	header[20]=((set.sample_rate&15)<<4)|((set.channels-1)<<1)|(((set.bps-1)>>4)&1);
-	header[21]=(((set.bps-1)&15)<<4);
-
-	if(!(out_open(&out, opath, set.seek)))
-		goodbye("Error: fopen() output failed\n");
-	seektable_init(&(out.seektable), &set, header);//do before writing header, it may change header
-	//preserved metadata should have been determined by this point, it may change header
-	out_write(&out, header, 42);
-	//optionally write preserved metadata TODO
-	seektable_write_dummy(&(out.seektable), &set, &out);
+	prepare_io(&in, ipath, &out, opath, header, &set);
 
 	set.diff_comp_settings=strcmp(set.comp_anal, set.comp_output)!=0;
 	set.diff_comp_settings=set.diff_comp_settings?set.diff_comp_settings:(set.apod_anal && !set.apod_output);
