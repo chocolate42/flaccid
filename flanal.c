@@ -480,12 +480,13 @@ void printstat(size_t bits, size_t totbits, char *msg){
 	printf("%6zu (%f%%) %s\n", bits, perc, msg);
 }
 
-size_t flanal_play(char *path){
+size_t flanal_play(char *path, int print_bitstats){
 	char *meta_names[]={"STREAMINFO", "PADDING", "APPLICATION", "SEEKTABLE", "VORBIS_COMMENT", "CUESHEET", "PICTURE", "RESERVED", NULL};
 	char *model_names[]={"subframes used constant modelling", "subframes used verbatim modelling", "subframes used fixed modelling", "subframes used lpc modelling", NULL};
 	bitfile b;
 	flanal s={0};
 	size_t framebits_tot, i;
+
 	memset(&b, 0, sizeof(bitfile));
 	memset(&s, 0, sizeof(flanal));
 	s.b=&b;
@@ -515,61 +516,118 @@ size_t flanal_play(char *path){
 	if(!s.samples_in_stream)
 		printf("Samples seen: %zu\n", s.actual_samples_in_stream);
 	//anything after last frame is ignored
+	if(print_bitstats){
+		printf("\nMetadata bit stats (%% including bitstream):\n");
+		for(i=0;meta_names[i];++i){
+			if(s.metablocks[i])
+				printstat(s.metablocks[i], framebits_tot, meta_names[i]);
+		}
 
-	printf("\nMetadata bit stats (%% including bitstream):\n");
-	for(i=0;meta_names[i];++i){
-		if(s.metablocks[i])
-			printstat(s.metablocks[i], framebits_tot, meta_names[i]);
+		printf("\nFrame header stats (%% excluding metadata):\n");
+		printstat(s.cframe_sync, framebits_tot, "bits spent on sync codes");
+		printstat(s.cframe_reserved, framebits_tot, "bits spent on frame reservations to maintain syncability");
+		printstat(s.cframe_blockstrat, framebits_tot, "bits spent on block strategy bit");
+		printstat(s.cframe_blocksize, framebits_tot, "bits spent encoding blocksize");
+		printstat(s.cframe_samplerate, framebits_tot, "bits spent encoding samplerate");
+		printstat(s.cframe_channelassignment, framebits_tot, "bits spent encoding channel assignment");
+		printstat(s.cframe_samplesize, framebits_tot, "bits spent encoding sample size");
+		printstat(s.cframe_utf8, framebits_tot, "bits spent encoding current frame/sample index with UTF8");
+		printstat(s.cframe_crc8, framebits_tot, "bits spent encoding frame header crc8");
+
+		printf("\nSubframe header stats (%% excluding metadata)\n");
+		printstat(s.csubframe_reserved, framebits_tot, "bits spent on subframe reservations to maintain syncability");
+		printstat(s.csubframe_type, framebits_tot, "bits spent encoding model type");
+		printstat(s.csubframe_wastedbits, framebits_tot, "bits spent on wasted bits flag");
+
+		printf("\nModelling stats (bit %% excluding metadata) (excluding residual bits)\n");
+		for(i=0;model_names[i];++i)
+			printstat(s.subframe_type[i], s.subframe_type[0]+s.subframe_type[1]+s.subframe_type[2]+s.subframe_type[3], model_names[i]);
+		printstat(s.bitlen_constant, framebits_tot, "bits spent on constant");
+		printstat(s.bitlen_verbatim, framebits_tot, "bits spent on verbatim");
+		printstat(s.bitlen_fixed, framebits_tot, "bits spent on fixed");
+		printstat(s.bitlen_lpc, framebits_tot, "bits spent on LPC");
+
+		printf("\nResidual stats (%% excluding metadata):\n");
+		printstat(s.res_reserved, framebits_tot, "bits spent on residual reservations to maintain syncability");
+		printstat(s.res_type, framebits_tot, "bits spent on residual type (4 or 5 bit rice parameter)");
+		printstat(s.res_encoding, framebits_tot, "bits spent on residual encoding");
+
+		printf("\nFrame footer stats (%% excluding metadata):\n");
+		printstat(s.cframe_crc16, framebits_tot, "bits spent encoding frame footer crc16");
+		printstat(s.cframe_pad, framebits_tot, "bits spent on frame padding for byte alignment");
+
+		printf("\nCombined stats (%% excluding metadata)\n");
+		printstat(s.bitlen_constant+s.bitlen_verbatim+s.bitlen_fixed+s.bitlen_lpc, framebits_tot, "total bits spent on modelling");
+		printstat(s.res_encoding+s.res_type+s.res_reserved, framebits_tot, "total bits spent on residual");
+		printstat(s.cframe_sync+s.cframe_reserved+s.cframe_blockstrat+s.cframe_blocksize+s.cframe_samplerate+s.cframe_channelassignment+s.cframe_samplesize+s.cframe_utf8+s.cframe_crc8+s.csubframe_reserved+s.csubframe_type+s.csubframe_wastedbits+s.cframe_crc16+s.cframe_pad, framebits_tot, "total bits spent on overhead (frame_header+subframe_header+footer");
+
+		printf("\nMiscellaneous stats:\n");
+		printstat(s.res_rice, s.res_escape+s.res_rice, "of residual partitions stored rice-encoded");
+		printstat(s.res_escape, s.res_escape+s.res_rice, "of residual partitions stored verbatim");
+		printstat(s.cframe_reserved+s.csubframe_reserved+s.res_reserved, framebits_tot, "total bits spent on pure reservations to maintain syncability (not including the many reserved values in used elements or end-of-frame padding)");
 	}
+	return 0;
+}
 
-	printf("\nFrame header stats (%% excluding metadata):\n");
-	printstat(s.cframe_sync, framebits_tot, "bits spent on sync codes");
-	printstat(s.cframe_reserved, framebits_tot, "bits spent on frame reservations to maintain syncability");
-	printstat(s.cframe_blockstrat, framebits_tot, "bits spent on block strategy bit");
-	printstat(s.cframe_blocksize, framebits_tot, "bits spent encoding blocksize");
-	printstat(s.cframe_samplerate, framebits_tot, "bits spent encoding samplerate");
-	printstat(s.cframe_channelassignment, framebits_tot, "bits spent encoding channel assignment");
-	printstat(s.cframe_samplesize, framebits_tot, "bits spent encoding sample size");
-	printstat(s.cframe_utf8, framebits_tot, "bits spent encoding current frame/sample index with UTF8");
-	printstat(s.cframe_crc8, framebits_tot, "bits spent encoding frame header crc8");
+uint8_t *metacomp_process(char *inpath, size_t *outsize){
+	FILE *af;
+	uint8_t *a, *aout;
+	size_t acnt, aloc=4;
+	size_t cnt;
+	af=fopen(inpath, "rb");
+	assert(af);
+	fseek(af, 0, SEEK_END);
+	acnt=ftell(af);
+	rewind(af);
+	a=malloc(acnt);
+	aout=malloc(acnt);
+	assert(a);
+	if(fread(a, 1, acnt, af)!=acnt)
+		exit(1);
+	fclose(af);
+	*outsize=0;
+	while(1){
+		cnt=(a[aloc+1]<<16)+(a[aloc+2]<<8)+a[aloc+3];
+		if((a[aloc]&127)!=0 && (a[aloc]&127)!=1 && (a[aloc]&127)!=3){
+			memcpy(aout+*outsize, a+aloc+4, cnt);
+			*outsize+=cnt;
+		}
+		if(a[aloc]>>7)
+			break;
+		aloc+=(4+cnt);
+	}
+	free(a);
+	return aout;
+}
 
-	printf("\nSubframe header stats (%% excluding metadata)\n");
-	printstat(s.csubframe_reserved, framebits_tot, "bits spent on subframe reservations to maintain syncability");
-	printstat(s.csubframe_type, framebits_tot, "bits spent encoding model type");
-	printstat(s.csubframe_wastedbits, framebits_tot, "bits spent on wasted bits flag");
-
-	printf("\nModelling stats (bit %% excluding metadata) (excluding residual bits)\n");
-	for(i=0;model_names[i];++i)
-		printstat(s.subframe_type[i], s.subframe_type[0]+s.subframe_type[1]+s.subframe_type[2]+s.subframe_type[3], model_names[i]);
-	printstat(s.bitlen_constant, framebits_tot, "bits spent on constant");
-	printstat(s.bitlen_verbatim, framebits_tot, "bits spent on verbatim");
-	printstat(s.bitlen_fixed, framebits_tot, "bits spent on fixed");
-	printstat(s.bitlen_lpc, framebits_tot, "bits spent on LPC");
-
-	printf("\nResidual stats (%% excluding metadata):\n");
-	printstat(s.res_reserved, framebits_tot, "bits spent on residual reservations to maintain syncability");
-	printstat(s.res_type, framebits_tot, "bits spent on residual type (4 or 5 bit rice parameter)");
-	printstat(s.res_encoding, framebits_tot, "bits spent on residual encoding");
-
-	printf("\nFrame footer stats (%% excluding metadata):\n");
-	printstat(s.cframe_crc16, framebits_tot, "bits spent encoding frame footer crc16");
-	printstat(s.cframe_pad, framebits_tot, "bits spent on frame padding for byte alignment");
-
-	printf("\nCombined stats (%% excluding metadata)\n");
-	printstat(s.bitlen_constant+s.bitlen_verbatim+s.bitlen_fixed+s.bitlen_lpc, framebits_tot, "total bits spent on modelling");
-	printstat(s.res_encoding+s.res_type+s.res_reserved, framebits_tot, "total bits spent on residual");
-	printstat(s.cframe_sync+s.cframe_reserved+s.cframe_blockstrat+s.cframe_blocksize+s.cframe_samplerate+s.cframe_channelassignment+s.cframe_samplesize+s.cframe_utf8+s.cframe_crc8+s.csubframe_reserved+s.csubframe_type+s.csubframe_wastedbits+s.cframe_crc16+s.cframe_pad, framebits_tot, "total bits spent on overhead (frame_header+subframe_header+footer");
-
-	printf("\nMiscellaneous stats:\n");
-	printstat(s.res_rice, s.res_escape+s.res_rice, "of residual partitions stored rice-encoded");
-	printstat(s.res_escape, s.res_escape+s.res_rice, "of residual partitions stored verbatim");
-	printstat(s.cframe_reserved+s.csubframe_reserved+s.res_reserved, framebits_tot, "total bits spent on pure reservations to maintain syncability (not including the many reserved values in used elements or end-of-frame padding)");
-
+int metacomp(char *ap, char *bp){
+	uint8_t *ameta, *bmeta;
+	size_t ameta_size, bmeta_size;
+	ameta=metacomp_process(ap, &ameta_size);
+	bmeta=metacomp_process(bp, &bmeta_size);
+	if(ameta_size!=bmeta_size){
+		fprintf(stderr, "Err: meta sizes do not match: %zu %zu\n", ameta_size, bmeta_size);
+		return 1;
+	}
+	if(ameta_size==0)
+		return 0;
+	if(memcmp(ameta, bmeta, ameta_size)!=0){
+		fprintf(stderr, "Err: --metacomp metadata does not match\n");
+		return 1;
+	}
 	return 0;
 }
 
 int main(int argc, char *argv[]){
-	if(argc!=2)
-		return printf("Usage: flanal flac_file\n");
-	return flanal_play(argv[1]);
+	if(argc>=3 && strcmp(argv[1], "--bitstat")==0)
+		return flanal_play(argv[2], argc==4?1:0);
+	else if(argc==4 && strcmp(argv[1], "--metacomp")==0)
+		return metacomp(argv[2], argv[3]);
+	else{
+		printf("Usage:\n\n"
+		"Process file collecting bit stats\n"
+		"flanal --bitstat file.flac\n\n"
+		"Compare two flac files for metadata equality\n"
+		"flanal --metacomp a.flac b.flac\n");
+	}
 }
