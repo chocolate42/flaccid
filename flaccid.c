@@ -147,24 +147,20 @@ static void parse_blocksize_list(char *list, int **res, size_t *res_cnt){
 	do{
 		*res=realloc(*res, sizeof(int)*(*res_cnt+1));
 		(*res)[*res_cnt]=atoi(cptr+1);
-		if((*res)[*res_cnt]<16)
-			goodbye("Error: Blocksize must be at least 16\n");
-		if((*res)[*res_cnt]>65535)
-			goodbye("Error: Blocksize must be at most 65535\n");
+		_if(((*res)[*res_cnt]<16), "Blocksize must be at least 16");
+		_if(((*res)[*res_cnt]>65535), "Blocksize must be at most 65535");
 		*res_cnt=*res_cnt+1;
 	}while((cptr=strchr(cptr+1, ',')));
 
 	qsort(*res, *res_cnt, sizeof(int), comp_int_asc);
-	for(i=1;i<*res_cnt;++i){
-		if((*res)[i]==(*res)[i-1])
-			goodbye("Error: Duplicate blocksizes in list\n");
-	}
+	for(i=1;i<*res_cnt;++i)
+		_if(((*res)[i]==(*res)[i-1]), "Duplicate blocksizes in list");
 }
 
 static void preset_check(flac_settings *set, char *setting){
 	if(set->ui_type==UI_PRESET){
-		fprintf(stderr, "Error: Cannot mix %s with --preset\n", setting);
-		goodbye("");
+		fprintf(stderr, "Cannot mix %s with --preset\n", setting);
+		_("Simple/Complex UI mixed");
 	}
 	set->ui_type=UI_MANUAL;
 }
@@ -258,8 +254,8 @@ int main(int argc, char *argv[]){
 			break;
 		switch(c){
 			case 'h':
-				goodbye(help);
-				break;
+				fprintf(stderr, "%s", help);
+				return 0;
 
 			case 'i':
 				ipath=optarg;
@@ -278,7 +274,7 @@ int main(int argc, char *argv[]){
 				else if(strcmp(optarg, "fixed")==0)
 					set.mode=4;
 				else
-					goodbye("Unknown mode\n");
+					_("Unknown mode");
 				break;
 
 			case 'o':
@@ -286,9 +282,8 @@ int main(int argc, char *argv[]){
 				break;
 
 			case 'w':
+				_if((atoi(optarg)<1), "Worker count must be >=1, it is the number of encoder cores to use");
 				set.work_count=atoi(optarg);
-				if(set.work_count<1)
-					goodbye("Error: Worker count must be >=1, it is the number of encoder cores to use\n");
 				break;
 
 			case 256:
@@ -318,30 +313,26 @@ int main(int argc, char *argv[]){
 
 			case 261:
 				preset_check(&set, "--tweak");
+				_if((atoi(optarg)<0), "Invalid tweak setting");
 				set.tweak=atoi(optarg);
-				if(atoi(optarg)<0)
-					goodbye("Error: Invalid tweak setting\n");
 				break;
 
 			case 263:
 				preset_check(&set, "--blocksize-limit-lower");
+				_if((atoi(optarg)>65535 || atoi(optarg)<16), "Invalid lower limit blocksize");
 				set.blocksize_limit_lower=atoi(optarg);
-				if(atoi(optarg)>65535 || atoi(optarg)<16)
-					goodbye("Error: Invalid lower limit blocksize\n");
 				break;
 
 			case 264:
 				preset_check(&set, "--blocksize-limit-upper");
+				_if((atoi(optarg)>65535 || atoi(optarg)<16), "Invalid upper limit blocksize");
 				set.blocksize_limit_upper=atoi(optarg);
-				if(atoi(optarg)>65535 || atoi(optarg)<16)
-					goodbye("Error: Invalid upper limit blocksize\n");
 				break;
 
 			case 265:
 				preset_check(&set, "--merge");
+				_if((atoi(optarg)<0), "Invalid merge setting");
 				set.merge=atoi(optarg);
-				if(atoi(optarg)<0)
-					goodbye("Error: Invalid merge setting\n");
 				break;
 
 			case 266:
@@ -360,15 +351,13 @@ int main(int argc, char *argv[]){
 
 			case 269:
 				preset_check(&set, "--outperc");
+				_if((atoi(optarg)<1 || atoi(optarg)>100), "Invalid --outperc setting (must be in integer between 1 and 100 inclusive)");
 				set.outperc=atoi(optarg);
-				if(atoi(optarg)<1 || atoi(optarg)>100)
-					goodbye("Error: Invalid --outperc setting (must be in integer between 1 and 100 inclusive)\n");
 				break;
 
 			case 270:
+				_if((atoi(optarg)<=0), "Queue size cannot be negative");
 				set.queue_size=atoi(optarg);
-				if(set.queue_size<=0)
-					goodbye("Error: Queue size cannot be negative\n");
 				break;
 
 			case 271:
@@ -380,9 +369,8 @@ int main(int argc, char *argv[]){
 				break;
 
 			case 273:
+				_if((atoi(optarg)<1), "Invalid --peakset-window setting");
 				set.peakset_window=atoi(optarg);
-				if(atoi(optarg)<1)
-					goodbye("Error: Invalid --peakset-window setting\n");
 				break;
 
 			case 274:
@@ -390,20 +378,16 @@ int main(int argc, char *argv[]){
 				break;
 
 			case 275:
+				_if((strcmp(optarg, "wav")!=0 && strcmp(optarg, "flac")!=0 && strcmp(optarg, "cdda")!=0), "--input-format must be one of flac/wav/cdda");
 				set.input_format=optarg;
-				if(strcmp(optarg, "wav")!=0 && strcmp(optarg, "flac")!=0 && strcmp(optarg, "cdda")!=0)
-					goodbye("Error: --input-format must be one of flac/wav/cdda\n");
 				break;
 
 			case 276:
-				if(set.ui_type==UI_MANUAL)
-					goodbye("Error: Cannot mix manual settings with --preset\n");
+				_if((set.ui_type==UI_MANUAL), "Cannot mix manual settings with --preset");
+				_if((atoi(optarg)<0), "Cannot have a negative preset");
+				_if((strchr(optarg, 'M')?1:0), "-M is an unsupported ./flac setting");
 				set.ui_type=UI_PRESET;
 
-				if(atoi(optarg)<0)
-					goodbye("Error: Cannot have a negative preset\n");
-				if(strchr(optarg, 'M'))
-					goodbye("Error: -M is an unsupported ./flac setting\n");
 				if(atoi(optarg)<=8){
 					set.mode=MODE_FIXED;
 					if(strchr(optarg, 'b') && atoi(strchr(optarg, 'b')+1)>15){
@@ -418,8 +402,7 @@ int main(int argc, char *argv[]){
 					set.comp_anal=optarg;
 				}
 				else{
-					if(strchr(optarg, 'b'))
-						goodbye("Error: -b is an unsupported ./flac setting for variable presets 9+\n");
+					_if((strchr(optarg, 'b')?1:0), "-b is an unsupported ./flac setting for variable presets 9+");
 					switch(atoi(optarg)){
 						case 9:
 							set.mode=MODE_GASC;
@@ -462,14 +445,13 @@ int main(int argc, char *argv[]){
 							break;
 
 						default:
-							goodbye("Error: Unknown preset\n");
+							_("Unknown preset");
 					}
 				}
 				break;
 
 			case 277:
-				if(set.ui_type==UI_MANUAL)
-					goodbye("Error: Cannot mix manual settings with --preset\n");
+				_if((set.ui_type==UI_MANUAL), "Cannot mix manual settings with --preset");
 				if(set.ui_type==UI_UNDEFINED){//set a default in case --preset is never defined
 					set.mode=MODE_FIXED;
 					blocklist_str="4096";
@@ -485,11 +467,9 @@ int main(int argc, char *argv[]){
 				break;
 
 			case 278:
+				_if((atoi(optarg)<-1), "--seektable option invalid");
+				_if((atoi(optarg)>932067), "Too many seekpoints, max format can handle is 932067");
 				set.seektable=atoi(optarg);
-				if(atoi(optarg)<-1)
-					goodbye("Error: --seektable option invalid\n");
-				if(atoi(optarg)>932067)
-					goodbye("Error: Too many seekpoints, max format can handle is 932067\n");
 				break;
 
 			case 279:
@@ -497,21 +477,16 @@ int main(int argc, char *argv[]){
 				break;
 
 			case '?':
-				goodbye("");
+				_("Unknown option");
 				break;
 		}
 	}
 
-	if(!ipath)
-		goodbye("Error: No input\n");
-	if(!opath)
-		goodbye("Error: No output\n");
-	if(set.mode==-1)
-		goodbye("Error: No mode set, either set a mode manually or choose a preset\n");
-	if(!set.seek && set.md5)
-		goodbye("Error: Cannot use MD5 if seek is disabled\n");
-	if(set.seektable!=0 && !set.seek)
-		goodbye("Error: Cannot add a seektable if seek is disabled\n");
+	_if((!ipath), "No input");
+	_if((!opath), "No output");
+	_if((set.mode==-1), "No mode set, either set a mode manually or choose a preset");
+	_if((!set.seek && set.md5), "Cannot use MD5 if seek is disabled");
+	_if((set.seektable!=0 && !set.seek), "Cannot add a seektable if seek is disabled");
 
 	if(!blocklist_str){//valid defaults for the different modes
 		if(set.mode==MODE_GASC)

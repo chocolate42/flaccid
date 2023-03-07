@@ -66,8 +66,7 @@ int chunk_main(input *in, output *out, flac_settings *set){
 	mode_boilerplate_init(set, &cstart, &q, &stat);
 
 	for(i=1;i<set->blocks_count;++i){
-		if(set->blocks[i-1]*2!=set->blocks[i])
-			goodbye("Error: Chunk mode requires blocksizes to be a multiple of two from each other\n");
+		_if((set->blocks[i-1]*2!=set->blocks[i]), "Chunk mode requires blocksizes to be a multiple of two from each other");
 		encoder_cnt*=2;
 	}
 	--encoder_cnt;

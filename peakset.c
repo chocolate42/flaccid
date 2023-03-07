@@ -87,13 +87,9 @@ int peak_main(input *in, output *out, flac_settings *set){
 
 	mode_boilerplate_init(set, &cstart, &q, &stat);
 
-	if(set->blocks_count==1)
-		goodbye("Error: At least two blocksizes must be available\n");
-
-	for(i=1;i<set->blocks_count;++i){
-		if(set->blocks[i]%set->blocks[0])
-			goodbye("Error: All blocksizes must be a multiple of the minimum blocksize\n");
-	}
+	_if((set->blocks_count==1), "At least two blocksizes must be available");
+	for(i=1;i<set->blocks_count;++i)
+		_if((set->blocks[i]%set->blocks[0]), "All blocksizes must be a multiple of the minimum blocksize");
 
 	max_window_size=(set->peakset_window*1000000)/set->blocks[0];
 

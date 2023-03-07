@@ -12,10 +12,8 @@ int gasc_main(input *in, output *out, flac_settings *set){
 
 	mode_boilerplate_init(set, &cstart, &q, &stat);
 
-	if(set->blocks_count!=1)
-		goodbye("Error: gasc cannot use multiple block sizes\n");
-	if(2*set->blocks[0]>set->blocksize_limit_upper)
-		goodbye("Error: gasc needs an upper blocksize limit at least twice that of the blocksize used\n");
+	_if((set->blocks_count!=1), "gasc cannot use multiple block sizes");
+	_if((2*set->blocks[0]>set->blocksize_limit_upper), "gasc needs an upper blocksize limit at least twice that of the blocksize used");
 
 	a =calloc(1, sizeof(simple_enc));
 	b =calloc(1, sizeof(simple_enc));
@@ -49,9 +47,8 @@ int gasc_main(input *in, output *out, flac_settings *set){
 				simple_enc_analyse(ab, set, in, 2*set->blocks[0], in->loc_analysis, &stat);
 			}
 		}
-		else if((ab->sample_cnt+set->blocks[0]>in->sample_cnt) && !simple_enc_eof(&q, &a, set, in, in->sample_cnt+1, &stat, out))//hit eof in middle of frame
-				goodbye("Error: Failed to finalise in-progress frame\n");
 		else{//iterate
+			_if(((ab->sample_cnt+set->blocks[0]>in->sample_cnt) && !simple_enc_eof(&q, &a, set, in, in->sample_cnt+1, &stat, out)), "Failed to finalise in-progress frame");//eof mid-frame
 			swap=a;
 			a=ab;
 			ab=swap;

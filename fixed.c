@@ -10,14 +10,10 @@ int fixed_main(input *in, output *out, flac_settings *set){
 	simple_enc *a;
 	mode_boilerplate_init(set, &cstart, &q, &stat);
 
-	if(set->blocks_count!=1)
-		goodbye("Error: Fixed blocking strategy cannot use multiple block sizes\n");
-	if(set->tweak)
-		goodbye("Error: Fixed blocking strategy cannot tweak\n");
-	if(set->merge)
-		goodbye("Error: Fixed blocking strategy cannot merge\n");
-	if(set->diff_comp_settings)
-		goodbye("Error: Fixed blocking strategy cannot have different comp settings\n");
+	_if((set->blocks_count!=1), "Fixed blocking strategy cannot use multiple block sizes");
+	_if((set->tweak), "Fixed blocking strategy cannot tweak");
+	_if((set->merge), "Fixed blocking strategy cannot merge");
+	_if((set->diff_comp_settings), "Fixed blocking strategy cannot have different comp settings");
 
 	a=calloc(1, sizeof(simple_enc));
 	while(in->input_read(in, set->blocks[0])){

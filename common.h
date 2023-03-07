@@ -107,7 +107,8 @@ typedef struct input{
 
 } input;
 
-void goodbye(char *s);
+void _(char *s);
+void _if(int goodbye, char *s);
 FLAC__StaticEncoder *init_static_encoder(flac_settings *set, int blocksize, char *comp, char *apod);
 void print_settings(flac_settings *set);
 void print_stats(stats *stat, input *in, size_t outsize);

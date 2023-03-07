@@ -71,8 +71,7 @@ static size_t input_read_flac(input *in, size_t sample_cnt){
 	//max frame is 65535, so overallocating by more means we should always have enough buffer
 	in->buf=realloc(in->buf, ((in->loc_analysis-in->loc_buffer)+sample_cnt+65536)*(in->set->bps==16?2:4)*in->set->channels);
 	while(in->sample_cnt<sample_cnt){
-		if(!FLAC__stream_decoder_process_single(in->dec))
-			goodbye("Error: Fatal error decoding flac input (FLAC__stream_decoder_process_single), check input\n");
+		_if((!FLAC__stream_decoder_process_single(in->dec)), "Fatal error decoding flac input (FLAC__stream_decoder_process_single), check input");
 		if(FLAC__STREAM_DECODER_END_OF_STREAM==FLAC__stream_decoder_get_state(in->dec))
 			break;
 	}
@@ -190,8 +189,7 @@ static void metadata_callback(const FLAC__StreamDecoder *dec, const FLAC__Stream
 		break;
 
 	case FLAC__METADATA_TYPE_APPLICATION://preserve
-		if(metadata->length<4)
-			goodbye("Error: APPLICATION metadata too short to be valid\n");
+		_if((metadata->length<4), "APPLICATION metadata too short to be valid");
 		written+=out_write(in->out, head, 4);
 		written+=out_write(in->out, metadata->data.application.id, 4);
 		if(metadata->length>4)
@@ -267,14 +265,14 @@ static void metadata_callback(const FLAC__StreamDecoder *dec, const FLAC__Stream
 		break;
 
 	default:
-		goodbye("Error: Unknown metadata type when preservation enabled\n");
+		_("Unknown metadata type when preservation enabled");
 	}
 }
 
 static void error_callback(const FLAC__StreamDecoder *decoder, FLAC__StreamDecoderErrorStatus status, void *client_data){
 	(void)decoder, (void)client_data;
-	fprintf(stderr, "Got error callback: %s\n", FLAC__StreamDecoderErrorStatusString[status]);
-	goodbye("");
+	fprintf(stderr, "Error callback status: %s\n", FLAC__StreamDecoderErrorStatusString[status]);
+	_("Flac input error callback triggered");
 }
 
 static int input_fopen_flac_init(input *in, char *path){
@@ -284,21 +282,15 @@ static int input_fopen_flac_init(input *in, char *path){
 	FLAC__stream_decoder_set_md5_checking(in->dec, true);
 	if(in->set->preserve_flac_metadata)
 		FLAC__stream_decoder_set_metadata_respond_all(in->dec);
-	if(strcmp(path, "-")==0){
-		if(FLAC__STREAM_DECODER_INIT_STATUS_OK!=(status=FLAC__stream_decoder_init_FILE(in->dec, stdin, write_callback, metadata_callback, error_callback, in))){
-			fprintf(stderr, "ERROR: initializing decoder: %s\n", FLAC__StreamDecoderInitStatusString[status]);
-			goodbye("");
-		}
-	}
-	else{
-		if(FLAC__STREAM_DECODER_INIT_STATUS_OK!=(status=FLAC__stream_decoder_init_file(in->dec, path, write_callback, metadata_callback, error_callback, in))){
-			fprintf(stderr, "ERROR: initializing decoder: %s\n", FLAC__StreamDecoderInitStatusString[status]);
-			goodbye("");
-		}
+	if((strcmp(path, "-")==0) && FLAC__STREAM_DECODER_INIT_STATUS_OK==(status=FLAC__stream_decoder_init_FILE(in->dec, stdin, write_callback, metadata_callback, error_callback, in)));
+	else if((strcmp(path, "-")!=0) && (FLAC__STREAM_DECODER_INIT_STATUS_OK==(status=FLAC__stream_decoder_init_file(in->dec, path, write_callback, metadata_callback, error_callback, in))));
+	else
+	{
+			fprintf(stderr, "Decoder init status: %s\n", FLAC__StreamDecoderInitStatusString[status]);
+			_("Flac input decoder init failed");
 	}
 
-	if(!FLAC__stream_decoder_process_single(in->dec))
-		goodbye("Error: Failed to read flac input STREAMINFO\n");
+	_if((!FLAC__stream_decoder_process_single(in->dec)), "Failed to read flac input STREAMINFO");
 	return 1;
 }
 
@@ -334,18 +326,15 @@ static int input_fopen_wav(input *in, char *path){
 	if(strcmp(path, "-")==0){
 		//drwav doesn't seem to have convenient FILE* functions
 		//so something might have to be done with raw memory
-		goodbye("Error: Currently piping not supported for wav input\n");//TODO
+		_("Currently piping not supported for wav input");//TODO
 	}
-	else{
-		if(!drwav_init_file(&(in->wav), path, NULL))
-			goodbye("Error: initializing wav decoder\n");
-	}
+	else
+		_if((!drwav_init_file(&(in->wav), path, NULL)), "initializing wav decoder");
 
 	in->set->sample_rate = in->wav.sampleRate;
 	in->set->channels = in->wav.channels;
 	in->set->bps = in->wav.bitsPerSample;
-	if(in->set->bps!=16)
-		goodbye("Error: Currently the only wav input support is 16 bit\n");
+	_if((in->set->bps!=16), "Currently the only wav input support is 16 bit");
 	in->set->encode_func=(in->set->bps==16)?FLAC__static_encoder_process_frame_bps16_interleaved:FLAC__static_encoder_process_frame_interleaved;
 	in->set->input_tot_samples=in->wav.totalPCMFrameCount;
 
@@ -367,8 +356,7 @@ static size_t input_read_cdda(input *in, size_t sample_cnt){
 
 static int input_fopen_cdda(input *in, char *path){
 	in->input_read=input_read_cdda;
-	if((in->cdda=(strcmp(path, "-")==0)?stdin:fopen(path, "rb"))==NULL)
-		goodbye("Error: Failed to fopen CDDA input\n");
+	_if(((in->cdda=(strcmp(path, "-")==0)?stdin:fopen(path, "rb"))==NULL), "Failed to fopen CDDA input");
 
 	in->set->sample_rate = 44100;
 	in->set->channels = 2;
@@ -389,7 +377,7 @@ int input_fopen(input *in, char *path, flac_settings *set){
 		return input_fopen_wav(in, path);
 	else if((set->input_format && strcmp(set->input_format, "cdda")==0) || (strlen(path)>3 && strcmp(".bin", path+strlen(path)-4)==0))
 		return input_fopen_cdda(in, path);
-	goodbye("Error: Unknown input format, use --input-format if format cannot be determined from extension\n");
+	_("Unknown input format, use --input-format if format cannot be determined from extension");
 	return 0;
 }
 
@@ -406,12 +394,10 @@ int input_fopen(input *in, char *path, flac_settings *set){
 */
 void prepare_io(input *in, char *ipath, output *out, char *opath, uint8_t *header, flac_settings *set){
 	//open output for writing
-	if(!(out_open(out, opath, set->seek)))
-		goodbye("Error: Failed to open output\n");
+	_if((!(out_open(out, opath, set->seek))), "Failed to open output");
 	in->out=out;
 	//open input for reading
-	if(!input_fopen(in, ipath, set))
-		goodbye("Error: Failed to open input\n");
+	_if((!input_fopen(in, ipath, set)), "Failed to open input");
 	//change subset based on input samplerate
 	if(!set->lax){
 		if(set->blocksize_limit_lower>((set->sample_rate<=48000)?4608:16384))
@@ -424,8 +410,7 @@ void prepare_io(input *in, char *ipath, output *out, char *opath, uint8_t *heade
 	}
 	else if(!set->blocksize_limit_upper)
 		set->blocksize_limit_upper=65535;
-	if(set->mode!=MODE_FIXED && set->blocksize_limit_lower==set->blocksize_limit_upper)
-		goodbye("Error: Variable encode modes need a range to work with\n");
+	_if((set->mode!=MODE_FIXED && set->blocksize_limit_lower==set->blocksize_limit_upper), "Variable encode modes need a range to work with");
 	//populate header with best known information, in case seeking to update isn't possible
 	if(set->mode==MODE_FIXED){
 		header[ 8]=(set->blocksize_min>>8)&255;
@@ -458,9 +443,6 @@ void prepare_io(input *in, char *ipath, output *out, char *opath, uint8_t *heade
 	//write seektable if applicable
 	seektable_write_dummy(&(out->seektable), set, out);
 	//finish reading flac input metadata, preserving is done in metadata callback
-	if(in->dec){//flac input
-		if(!FLAC__stream_decoder_process_until_end_of_metadata(in->dec))
-			goodbye("Error: Failed to read flac input metadata\n");
-	}
+	_if((in->dec && !FLAC__stream_decoder_process_until_end_of_metadata(in->dec)), "Failed to read flac input metadata");
 	out->seektable.firstframe_loc=out->outloc;
 }

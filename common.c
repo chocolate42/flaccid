@@ -41,21 +41,25 @@ void out_close(output *out){
 	fclose(out->fout);
 }
 
-void goodbye(char *s){
-	fprintf(stderr, "%s", s);
+void _(char *s){
+	fprintf(stderr, "Error: %s\n", s);
 	exit(1);
 }
+
+void _if(int goodbye, char *s){
+	if(goodbye)
+		_(s);
+}
+
 
 FLAC__StaticEncoder *init_static_encoder(flac_settings *set, int blocksize, char *comp, char *apod){
 	FLAC__StaticEncoder *r;
 	r=FLAC__static_encoder_new();
 	r->is_variable_blocksize=set->mode==4?0:1;
+	_if( ((!set->lax)&&(blocksize>16384 || (set->sample_rate<=48000 && blocksize>4608))), "Tried to use a non-subset blocksize without setting --lax");
+	_if((blocksize>set->blocksize_limit_upper), "Initialising encoder with blocksize bigger than --blocksize-limit-upper");
 	if(set->lax)
 		FLAC__stream_encoder_set_streamable_subset(r->stream_encoder, false);
-	else if(blocksize>16384 || (set->sample_rate<=48000 && blocksize>4608))
-		goodbye("Error: Tried to use a non-subset blocksize without setting --lax\n");
-	if(blocksize>set->blocksize_limit_upper)
-		goodbye("Error: Initialising encoder with blocksize bigger than --blocksize-limit-upper\n");
 	FLAC__stream_encoder_set_channels(r->stream_encoder, set->channels);
 	FLAC__stream_encoder_set_bits_per_sample(r->stream_encoder, set->bps);
 	FLAC__stream_encoder_set_sample_rate(r->stream_encoder, set->sample_rate);
@@ -84,8 +88,7 @@ FLAC__StaticEncoder *init_static_encoder(flac_settings *set, int blocksize, char
 	FLAC__stream_encoder_set_blocksize(r->stream_encoder, blocksize);/* override compression level blocksize */
 	FLAC__stream_encoder_set_loose_mid_side_stereo(r->stream_encoder, false);/* override adaptive mid-side, this doesn't play nice */
 
-	if(FLAC__static_encoder_init(r)!=FLAC__STREAM_ENCODER_INIT_STATUS_OK)
-		goodbye("Init failed\n");
+	_if((FLAC__STREAM_ENCODER_INIT_STATUS_OK!=FLAC__static_encoder_init(r)), "Init failed");
 
 	return r;
 }
@@ -380,10 +383,8 @@ void mode_boilerplate_init(flac_settings *set, clock_t *cstart, queue *q, stats 
 void mode_boilerplate_finish(flac_settings *set, clock_t *cstart, queue *q, stats *stat, input *in, output *out){
 	queue_dealloc(q, set, in, stat, out);
 	in->input_close(in);
-	if(set->input_tot_samples && (set->input_tot_samples!=in->loc_analysis))
-		goodbye("Error: Samples read different from what's in the input header (check input)\n");
-	if(set->md5 && memcmp(set->input_md5, set->zero, 16)!=0 && memcmp(set->input_md5, set->hash, 16)!=0)
-		goodbye("Error: MD5 of output doesn't match what's in the input header (check input)\n");
+	_if((set->input_tot_samples && (set->input_tot_samples!=in->loc_analysis)), "Samples read different from what's in the input header (check input)");
+	_if((set->md5 && memcmp(set->input_md5, set->zero, 16)!=0 && memcmp(set->input_md5, set->hash, 16)!=0), "MD5 of output doesn't match what's in the input header (check input)");
 	stat->cpu_time=((double)(clock()-*cstart))/CLOCKS_PER_SEC;
 	print_settings(set);
 	print_stats(stat, in, out->outloc);
