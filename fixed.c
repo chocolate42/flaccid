@@ -16,8 +16,10 @@ int fixed_main(input *in, output *out, flac_settings *set){
 	_if((set->diff_comp_settings), "Fixed blocking strategy cannot have different comp settings");
 
 	a=calloc(1, sizeof(simple_enc));
+	set->diff_comp_settings=1;//fake analysis to multithread in queue
 	while(in->input_read(in, set->blocks[0])){
-		simple_enc_analyse(a, set, in, in->sample_cnt<set->blocks[0]?in->sample_cnt:set->blocks[0], in->loc_analysis, &stat);
+		a->sample_cnt=in->sample_cnt<set->blocks[0]?in->sample_cnt:set->blocks[0];//fake analysis to multithread in queue
+		a->curr_sample=in->loc_analysis;//fake analysis to multithread in queue
 		a=simple_enc_out(&q, a, set, in, &stat, out);
 	}
 	mode_boilerplate_finish(set, &cstart, &q, &stat, in, out);

@@ -39,7 +39,7 @@ char *help=
 	"                         This is settable from simple or complex interface as\n"
 	"                         it mainly allows RAM usage to be customised\n"
 	" --preserve-flac-metadata: Preserve metadata from flac input, excluding padding\n"
-	" --queue size : Number of frames in output queue (default 8192), when output\n"
+	" --queue size : Number of frames in output queue (default 16), when output\n"
 	"                queue is full it gets flushed. Tweak/merge acting on the output\n"
 	"                queue and batching of output encoding allows multithreading\n"
 	"                even if the mode used is single-threaded. This is settable from\n"
@@ -239,7 +239,7 @@ int main(int argc, char *argv[]){
 	set.outperc=100;
 	set.peakset_window=26;
 	set.preserve_flac_metadata=0;
-	set.queue_size=8192;
+	set.queue_size=16;
 	set.sample_rate=44100;
 	set.seek=1;
 	set.seektable=-1;
