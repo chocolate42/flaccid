@@ -38,7 +38,7 @@ void seektable_init(seektable_t *seektable, flac_settings *set){
 //typical input will use <1MiB per hour of input
 void seektable_add(seektable_t *seektable, uint64_t sample_num, uint64_t offset, uint16_t frame_sample_cnt){
 	if(seektable->cnt==seektable->alloc){
-			seektable->set=realloc(seektable->set, (seektable->alloc+SEEKTABLE_GROWTH)*18);
+			seektable->set=realloc(seektable->set, (seektable->alloc+SEEKTABLE_GROWTH)*sizeof(seekpoint_t));
 			seektable->alloc+=SEEKTABLE_GROWTH;
 	}
 	seektable->set[seektable->cnt].sample_num=sample_num;
