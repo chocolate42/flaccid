@@ -141,7 +141,7 @@ Apodization settings format:
 
 ## Build
 
-First build the custom libFLAC, it adds a few functions to tap into libFLAC's encoder in a non-streaming way: https://github.com/chocolate42/flac
+First build a custom libFLAC that includes a static encoder implementation, the source for that is in the static_encoder branch of this repository: https://github.com/chocolate42/flac/tree/static_encoder
 
 Then to build flaccid on Linux do something like this:
 
