@@ -87,8 +87,11 @@ FLAC__StaticEncoder *init_static_encoder(flac_settings *set, int blocksize, char
 
 	FLAC__stream_encoder_set_blocksize(r->stream_encoder, blocksize);/* override compression level blocksize */
 	FLAC__stream_encoder_set_loose_mid_side_stereo(r->stream_encoder, false);/* override adaptive mid-side, this doesn't play nice */
-
-	_if((FLAC__STREAM_ENCODER_INIT_STATUS_OK!=FLAC__static_encoder_init(r)), "Init failed");
+	if(FLAC__STREAM_ENCODER_INIT_STATUS_OK!=FLAC__static_encoder_init(r)){
+		_if((0==strcmp(comp,"8p"))&&(0==strcmp(apod,"")), "Encoder init failed even with fallback settings");
+		FLAC__static_encoder_delete(r);
+		return init_static_encoder(set, blocksize, "8p", "");
+	}
 
 	return r;
 }
