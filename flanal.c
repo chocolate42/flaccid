@@ -58,6 +58,11 @@ void bitfile_open(bitfile *b, const char *pathname, const char *mode){
 	b->bitloc=0;
 }
 
+void bitfile_already_open(bitfile *b, FILE *f){
+	b->fp=f;
+	b->bitloc=ftell(f)*8;
+}
+
 int bitfile_close(bitfile *b){
 	return fclose(b->fp);
 }
@@ -97,7 +102,8 @@ typedef struct{
 	size_t bitlen_constant, bitlen_verbatim, bitlen_fixed, bitlen_lpc;//size of models
 	size_t subframe_type[4];//subtype presence counts
 	size_t res_escape, res_rice;//number of escaped/rice encodings
-	size_t res_reserved, res_type, res_encoding;
+	size_t res_reserved, res_type, res_encoding, res_partitioning;
+	size_t largest_rice_unary;
 } flanal;
 
 enum{STREAMINFO=0, PADDING, APPLICATION, SEEKTABLE, VORBIS_COMMENT, CUESHEET, PICTURE, INVALID=127};
@@ -212,13 +218,12 @@ void read_residual(flanal *s, int blocksize, uint32_t predictor_order){
 	}
 
 	s->residual_loc=0;
-	partition_order=bitfile_read(s->b, 4, &(s->res_encoding));
+	partition_order=bitfile_read(s->b, 4, &(s->res_partitioning));
 	partition_cnt=1<<partition_order;
 	for(i=0;i<partition_cnt;++i){
-		rice_param=bitfile_read(s->b, is_rice5?5:4, &(s->res_encoding));
+		rice_param=bitfile_read(s->b, is_rice5?5:4, &(s->res_partitioning));
 		if(rice_param==escape_code)
-			unencoded=bitfile_read(s->b, 5, &(s->res_encoding));
-
+			unencoded=bitfile_read(s->b, 5, &(s->res_partitioning));
 		if(!partition_order)
 			num_samples=blocksize-predictor_order;
 		else if(i)
@@ -244,6 +249,8 @@ void read_residual(flanal *s, int blocksize, uint32_t predictor_order){
 				u32=bitfile_read(s->b, 1, &(s->res_encoding));
 				for(q=0;!u32;++q)//unary quotient
 					u32=bitfile_read(s->b, 1, &(s->res_encoding));
+				if((q+1)>s->largest_rice_unary)//find largest bits consumed by single unary
+					s->largest_rice_unary=q+1;
 				u32=bitfile_read(s->b, rice_param, &(s->res_encoding));
 				s->residual[s->residual_loc++]=q*(1<<rice_param)+u32;
 			}
@@ -550,6 +557,7 @@ size_t flanal_play(char *path, int print_bitstats){
 		printf("\nResidual stats (%% excluding metadata):\n");
 		printstat(s.res_reserved, framebits_tot, "bits spent on residual reservations to maintain syncability");
 		printstat(s.res_type, framebits_tot, "bits spent on residual type (4 or 5 bit rice parameter)");
+		printstat(s.res_partitioning, framebits_tot, "bits spent on residual partitioning");
 		printstat(s.res_encoding, framebits_tot, "bits spent on residual encoding");
 
 		printf("\nFrame footer stats (%% excluding metadata):\n");
@@ -558,7 +566,7 @@ size_t flanal_play(char *path, int print_bitstats){
 
 		printf("\nCombined stats (%% excluding metadata)\n");
 		printstat(s.bitlen_constant+s.bitlen_verbatim+s.bitlen_fixed+s.bitlen_lpc, framebits_tot, "total bits spent on modelling");
-		printstat(s.res_encoding+s.res_type+s.res_reserved, framebits_tot, "total bits spent on residual");
+		printstat(s.res_partitioning+s.res_encoding+s.res_type+s.res_reserved, framebits_tot, "total bits spent on residual");
 		printstat(s.cframe_sync+s.cframe_reserved+s.cframe_blockstrat+s.cframe_blocksize+s.cframe_samplerate+s.cframe_channelassignment+s.cframe_samplesize+s.cframe_utf8+s.cframe_crc8+s.csubframe_reserved+s.csubframe_type+s.csubframe_wastedbits+s.cframe_crc16+s.cframe_pad, framebits_tot, "total bits spent on overhead (frame_header+subframe_header+footer");
 
 		printf("\nMiscellaneous stats:\n");
@@ -566,6 +574,7 @@ size_t flanal_play(char *path, int print_bitstats){
 		printstat(s.res_escape, s.res_escape+s.res_rice, "of residual partitions stored verbatim");
 		printstat(s.cframe_reserved+s.csubframe_reserved+s.res_reserved, framebits_tot, "total bits spent on pure reservations to maintain syncability (not including the many reserved values in used elements or end-of-frame padding)");
 	}
+	printf("Largest rice unary: %zu\n", s.largest_rice_unary);
 	return 0;
 }
 
