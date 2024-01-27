@@ -120,6 +120,7 @@ uint8_t write_utf8(uint32_t n, uint8_t *ret){
 int main(int argc, char *argv[]){
 	FILE *fi, *fo;
 	size_t read;
+	static uint32_t blocksize_reverse_lookup[16]={0, 192, 576, 1152, 2304, 4608, 0, 0, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768};
 	uint8_t header[42]={
 		0x66, 0x4C, 0x61, 0x43,//magic
 		0x80, 0, 0, 0x22,//streaminfo header, is_last=true
@@ -133,7 +134,7 @@ int main(int argc, char *argv[]){
 	uint8_t frame_header[4]={0xFF, 0xF8, 0x59, 0x18};
 	uint8_t subframe_header=0x02;
 	uint8_t in[4608*4], out[12+2+(4608*4)+1+2];
-	uint32_t frame=0, loc, channel, i, j, tot_samples=0;
+	uint32_t frame=0, loc, channel, i, tot_samples=0;
 
 	if(argc!=3)
 		return printf("Usage: flick in.raw out.flac\nInput must be raw CDDA (16 bit LE 2 channel)\n");
@@ -160,11 +161,27 @@ int main(int argc, char *argv[]){
 
 	if(read&&(read!=4608*4)){//end frame
 		uint32_t samples=read/4;
-		frame_header[2]=0x70|(frame_header[2]&15);//16 bit frame size flag
+		for(i=0;i<16;++i){
+			if(samples==blocksize_reverse_lookup[i])
+				break;
+		}
+		//set samplecount flag
+		if(i<16)
+			frame_header[2]=((i&15)<<4)|(frame_header[2]&15);//common
+		else if(samples<=256)
+			frame_header[2]=0x60|(frame_header[2]&15);//8 bit
+		else
+			frame_header[2]=0x70|(frame_header[2]&15);//16 bit
 		memcpy(out, frame_header, 4);//frame header
 		loc=4+write_utf8(frame++, out+4);//utf8
-		out[loc++]=((samples-1)>>8)&0xFF;
-		out[loc++]=(samples-1)&0xFF;
+		//write samplecount
+		if(i<16);
+		else if(samples<=256)
+			out[loc++]=(samples-1)&0xFF;
+		else{
+			out[loc++]=((samples-1)>>8)&0xFF;
+			out[loc++]=(samples-1)&0xFF;
+		}
 		out[loc++]=calc_crc8(out, loc);//crc8
 		for(channel=0;channel<2;++channel){
 			out[loc++]=subframe_header;
