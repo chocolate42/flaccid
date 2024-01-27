@@ -111,8 +111,8 @@ uint8_t write_utf8(uint32_t n, uint8_t *ret){
 	else{//assume n< 2^21, works for cdda ~60 hours, hack
 		ret[0]=0xF0|(n>>18);
 		ret[1]=0x80|((n>>12)&63);
-		ret[1]=0x80|((n>>6)&63);
-		ret[2]=0x80|(n&63);
+		ret[2]=0x80|((n>>6)&63);
+		ret[3]=0x80|(n&63);
 		return 4;
 	}
 }
