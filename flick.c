@@ -18,6 +18,16 @@
 #include <stdlib.h>
 #include <string.h>
 
+void _(char *s){
+	fprintf(stderr, "Error: %s\n", s);
+	exit(1);
+}
+
+void _if(int goodbye, char *s){
+	if(goodbye)
+		_(s);
+}
+
 //crc adapted from ffmpeg
 void calc_crc16(uint8_t *b, size_t cnt, uint8_t *ret){
 	const uint8_t *end=b+cnt;
@@ -194,12 +204,46 @@ int encode(char* ip, char *op){
 
 	fclose(fi);
 	fclose(fo);
+	return 0;
+}
+
+int decode(char *ip, char *op){
+	FILE *fi, *fo;
+	uint8_t header[42], *magic="fLaC", *out, si_len[3]={0,0,34};
+	uint32_t channels, blocksize, bps, islast, metasize;
+
+	fi=fopen(ip, "rb");
+	fo=fopen(op, "wb");
+
+	fread(header, 1, 42, fi);
+	_if(memcmp(header, magic, 4)!=0, "magic mismatch");
+	_if(header[4]&127, "streaminfo missing");
+	islast=header[4]>>7;
+	_if(memcmp(header+5, si_len,3)!=0, "streaminfo mis-sized");
+	_if(memcmp(header+8, header+10, 2)!=0, "Must be fixed blocksize stream");
+	blocksize=(header[8]<<8)|header[9];
+	channels=((header[20]>>1)&7)+1;
+	bps=(((header[20]&1)<<4)|(header[21]>>4))+1;
+	_if(bps%8, "bps must be multiple of 8");
+
+	while(!islast){//skip metadata
+		_if(4!=fread(header, 1, 4, fi), "unexpected EOF");
+		islast=header[0]>>7;
+		metasize=(header[1]<<16)|(header[2]<<8)|header[3];
+		fseek(fi, metasize, SEEK_CUR);
+	}
+
+	//while(1){//decode frames TODO
+	//}
+	return 42;
 }
 
 int main(int argc, char *argv[]){
 	if(argc!=4)
-		return printf("Usage: flick e in.raw out.flac\nInput must be raw CDDA (16 bit LE 2 channel)\n");
-	if(strcmp(argv[1], "e")!=0)
-		return printf("Mode unsupported\n");
-	return encode(argv[2], argv[3]);
+		return printf("Usage: flick [e/d] in out\nEncoder input must be raw CDDA (16 bit LE 2 channel)\n");
+	if(strcmp(argv[1], "e")==0)
+		return encode(argv[2], argv[3]);
+	else if(strcmp(argv[1], "d")==0)
+		return decode(argv[2], argv[3]);
+	return printf("Mode unsupported\n");
 }
