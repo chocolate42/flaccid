@@ -71,6 +71,45 @@ void calc_crc16(uint8_t *b, size_t cnt, uint8_t *ret){
 	ret[1]=(crc>>8)&0xFF;
 }
 
+void crc16_update(uint8_t *b, size_t cnt, uint16_t *crc){
+	const uint8_t *end=b+cnt;
+	static const uint16_t ctx[257]={
+		0x0000, 0x0580, 0x0F80, 0x0A00, 0x1B80, 0x1E00, 0x1400, 0x1180,
+		0x3380, 0x3600, 0x3C00, 0x3980, 0x2800, 0x2D80, 0x2780, 0x2200,
+		0x6380, 0x6600, 0x6C00, 0x6980, 0x7800, 0x7D80, 0x7780, 0x7200,
+		0x5000, 0x5580, 0x5F80, 0x5A00, 0x4B80, 0x4E00, 0x4400, 0x4180,
+		0xC380, 0xC600, 0xCC00, 0xC980, 0xD800, 0xDD80, 0xD780, 0xD200,
+		0xF000, 0xF580, 0xFF80, 0xFA00, 0xEB80, 0xEE00, 0xE400, 0xE180,
+		0xA000, 0xA580, 0xAF80, 0xAA00, 0xBB80, 0xBE00, 0xB400, 0xB180,
+		0x9380, 0x9600, 0x9C00, 0x9980, 0x8800, 0x8D80, 0x8780, 0x8200,
+		0x8381, 0x8601, 0x8C01, 0x8981, 0x9801, 0x9D81, 0x9781, 0x9201,
+		0xB001, 0xB581, 0xBF81, 0xBA01, 0xAB81, 0xAE01, 0xA401, 0xA181,
+		0xE001, 0xE581, 0xEF81, 0xEA01, 0xFB81, 0xFE01, 0xF401, 0xF181,
+		0xD381, 0xD601, 0xDC01, 0xD981, 0xC801, 0xCD81, 0xC781, 0xC201,
+		0x4001, 0x4581, 0x4F81, 0x4A01, 0x5B81, 0x5E01, 0x5401, 0x5181,
+		0x7381, 0x7601, 0x7C01, 0x7981, 0x6801, 0x6D81, 0x6781, 0x6201,
+		0x2381, 0x2601, 0x2C01, 0x2981, 0x3801, 0x3D81, 0x3781, 0x3201,
+		0x1001, 0x1581, 0x1F81, 0x1A01, 0x0B81, 0x0E01, 0x0401, 0x0181,
+		0x0383, 0x0603, 0x0C03, 0x0983, 0x1803, 0x1D83, 0x1783, 0x1203,
+		0x3003, 0x3583, 0x3F83, 0x3A03, 0x2B83, 0x2E03, 0x2403, 0x2183,
+		0x6003, 0x6583, 0x6F83, 0x6A03, 0x7B83, 0x7E03, 0x7403, 0x7183,
+		0x5383, 0x5603, 0x5C03, 0x5983, 0x4803, 0x4D83, 0x4783, 0x4203,
+		0xC003, 0xC583, 0xCF83, 0xCA03, 0xDB83, 0xDE03, 0xD403, 0xD183,
+		0xF383, 0xF603, 0xFC03, 0xF983, 0xE803, 0xED83, 0xE783, 0xE203,
+		0xA383, 0xA603, 0xAC03, 0xA983, 0xB803, 0xBD83, 0xB783, 0xB203,
+		0x9003, 0x9583, 0x9F83, 0x9A03, 0x8B83, 0x8E03, 0x8403, 0x8183,
+		0x8002, 0x8582, 0x8F82, 0x8A02, 0x9B82, 0x9E02, 0x9402, 0x9182,
+		0xB382, 0xB602, 0xBC02, 0xB982, 0xA802, 0xAD82, 0xA782, 0xA202,
+		0xE382, 0xE602, 0xEC02, 0xE982, 0xF802, 0xFD82, 0xF782, 0xF202,
+		0xD002, 0xD582, 0xDF82, 0xDA02, 0xCB82, 0xCE02, 0xC402, 0xC182,
+		0x4382, 0x4602, 0x4C02, 0x4982, 0x5802, 0x5D82, 0x5782, 0x5202,
+		0x7002, 0x7582, 0x7F82, 0x7A02, 0x6B82, 0x6E02, 0x6402, 0x6182,
+		0x2002, 0x2582, 0x2F82, 0x2A02, 0x3B82, 0x3E02, 0x3402, 0x3182,
+		0x1382, 0x1602, 0x1C02, 0x1982, 0x0802, 0x0D82, 0x0782, 0x0202, 0x0001};
+	while(b<end)
+		*crc=ctx[((uint8_t)*crc)^*b++]^(*crc>>8);
+}
+
 uint8_t calc_crc8(uint8_t *b, size_t cnt){
 	uint8_t crc=0;
 	const uint8_t *end=b+cnt;
@@ -209,8 +248,13 @@ int encode(char* ip, char *op){
 
 int decode(char *ip, char *op){
 	FILE *fi, *fo;
-	uint8_t header[42], *magic="fLaC", *out, si_len[3]={0,0,34};
-	uint32_t channels, blocksize, bps, islast, metasize;
+	uint8_t header[42], *magic="fLaC", *out, *planar, si_len[3]={0,0,34};
+	uint32_t channels, blocksize, blocksize_actual, samples_actual, bps, islast, metasize, framecounter=0, i, j, k, loc, fhloc;
+	uint8_t fh[24];
+	uint32_t utflen=1, utfresize[6]={0, 1<<7, 1<<11, 1<<16, 1<<21, 1<<26};
+	static uint32_t blocksize_lookup[16]={0, 192, 576, 1152, 2304, 4608, 8, 16, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768};
+	static uint32_t samplerate_lookup[16]={UINT32_MAX, 88200, 176400, 192000, 8000, 16000, 22050, 24000, 32000, 44100, 48000, 96000, 8, 16, 16, 0};
+	uint16_t crc16;
 
 	fi=fopen(ip, "rb");
 	fo=fopen(op, "wb");
@@ -233,17 +277,148 @@ int decode(char *ip, char *op){
 		fseek(fi, metasize, SEEK_CUR);
 	}
 
-	//while(1){//decode frames TODO
-	//}
-	return 42;
+	out=malloc(channels*blocksize*(bps>>3));
+	planar=malloc(channels*blocksize*(bps>>3));
+	while(1){
+		crc16=0;
+		fhloc=4+utflen;//fh+utf
+		if(fhloc!=fread(fh, 1, fhloc, fi))
+			break;//assumed EOF
+		blocksize_actual=blocksize_lookup[fh[2]>>4];
+		if(blocksize_actual==8){
+			fhloc+=fread(fh+fhloc, 1, 1, fi);
+			blocksize_actual=fh[fhloc-1]+1;
+		}
+		else if(blocksize_actual==16){
+			fhloc+=fread(fh+fhloc, 1, 2, fi);
+			blocksize_actual=(fh[fhloc-2]<<8)+fh[fhloc-1]+1;
+		}//ignore case==0, flick encode won't use it
+		samples_actual=samplerate_lookup[fh[2]&15];
+		if(samples_actual==8)
+			fhloc+=fread(fh+fhloc, 1, 1, fi);
+		else if(samples_actual==16)
+			fhloc+=fread(fh+fhloc, 1, 2, fi);
+		//ignore case==0||15, flick encode won't use it
+		fhloc+=fread(fh+fhloc, 1, 1, fi);
+		_if(calc_crc8(fh, fhloc-1)!=fh[fhloc-1], "crc8 failed");
+		crc16_update(fh, fhloc, &crc16);
+
+		++framecounter;
+		if(utfresize[utflen]==framecounter)
+			++utflen;
+
+		loc=0;
+		for(i=0;i<channels;++i){
+			fread(fh, 1, 1, fi);//skip subframeheader
+			crc16_update(fh, 1, &crc16);
+			loc+=fread(planar+loc, 1, blocksize_actual*(bps/8), fi);//read planes
+			crc16_update(planar+loc-(blocksize_actual*(bps/8)), blocksize_actual*(bps/8), &crc16);
+		}
+		fread(fh, 1, 2, fi);//crc16
+		_if(crc16!=((fh[1]<<8)|fh[0]), "crc16 failed");
+		//shuffle into interleaved LE TODO
+		loc=0;
+		for(i=0;i<blocksize_actual;++i){
+			for(j=0;j<channels;++j){
+				for(k=bps/8;k;--k){
+					out[loc++]=planar[(j*blocksize_actual*(bps/8))+(i*(bps/8))+(k-1)];
+				}
+			}
+		}
+		fwrite(out, 1, loc, fo);
+	}
+	fclose(fi);
+	fclose(fo);
+	return 0;
+}
+
+int decode_quick(char *ip, char *op){
+	FILE *fi, *fo;
+	uint8_t header[42], *magic="fLaC", *out, *planar, si_len[3]={0,0,34};
+	uint32_t channels, blocksize, blocksize_actual, samples_actual, bps, islast, metasize, framecounter=0, i, j, k, loc, fhloc;
+	uint8_t fh[24];
+	uint32_t utflen=1, utfresize[6]={0, 1<<7, 1<<11, 1<<16, 1<<21, 1<<26};
+	static uint32_t blocksize_lookup[16]={0, 192, 576, 1152, 2304, 4608, 8, 16, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768};
+	static uint32_t samplerate_lookup[16]={UINT32_MAX, 88200, 176400, 192000, 8000, 16000, 22050, 24000, 32000, 44100, 48000, 96000, 8, 16, 16, 0};
+
+	fi=fopen(ip, "rb");
+	fo=fopen(op, "wb");
+
+	fread(header, 1, 42, fi);
+	_if(memcmp(header, magic, 4)!=0, "magic mismatch");
+	_if(header[4]&127, "streaminfo missing");
+	islast=header[4]>>7;
+	_if(memcmp(header+5, si_len,3)!=0, "streaminfo mis-sized");
+	_if(memcmp(header+8, header+10, 2)!=0, "Must be fixed blocksize stream");
+	blocksize=(header[8]<<8)|header[9];
+	channels=((header[20]>>1)&7)+1;
+	bps=(((header[20]&1)<<4)|(header[21]>>4))+1;
+	_if(bps%8, "bps must be multiple of 8");
+
+	while(!islast){//skip metadata
+		_if(4!=fread(header, 1, 4, fi), "unexpected EOF");
+		islast=header[0]>>7;
+		metasize=(header[1]<<16)|(header[2]<<8)|header[3];
+		fseek(fi, metasize, SEEK_CUR);
+	}
+
+	out=malloc(channels*blocksize*(bps>>3));
+	planar=malloc(channels*blocksize*(bps>>3));
+	while(1){
+		fhloc=4+utflen;//fh+utf
+		if(fhloc!=fread(fh, 1, fhloc, fi))
+			break;//assumed EOF
+		blocksize_actual=blocksize_lookup[fh[2]>>4];
+		if(blocksize_actual==8){
+			fhloc+=fread(fh+fhloc, 1, 1, fi);
+			blocksize_actual=fh[fhloc-1]+1;
+		}
+		else if(blocksize_actual==16){
+			fhloc+=fread(fh+fhloc, 1, 2, fi);
+			blocksize_actual=(fh[fhloc-2]<<8)+fh[fhloc-1]+1;
+		}//ignore case==0, flick encode won't use it
+		samples_actual=samplerate_lookup[fh[2]&15];
+		if(samples_actual==8)
+			fhloc+=fread(fh+fhloc, 1, 1, fi);
+		else if(samples_actual==16)
+			fhloc+=fread(fh+fhloc, 1, 2, fi);
+		//ignore case==0||15, flick encode won't use it
+		fhloc+=fread(fh+fhloc, 1, 1, fi);
+
+		++framecounter;
+		if(utfresize[utflen]==framecounter)
+			++utflen;
+
+		loc=0;
+		for(i=0;i<channels;++i){
+			fread(fh, 1, 1, fi);//skip subframeheader
+			loc+=fread(planar+loc, 1, blocksize_actual*(bps/8), fi);//read planes
+		}
+		fread(fh, 1, 2, fi);//crc16
+		//shuffle into interleaved LE TODO
+		loc=0;
+		for(i=0;i<blocksize_actual;++i){
+			for(j=0;j<channels;++j){
+				for(k=bps/8;k;--k){
+					out[loc++]=planar[(j*blocksize_actual*(bps/8))+(i*(bps/8))+(k-1)];
+				}
+			}
+		}
+		fwrite(out, 1, loc, fo);
+	}
+	fclose(fi);
+	fclose(fo);
+	return 0;
 }
 
 int main(int argc, char *argv[]){
 	if(argc!=4)
-		return printf("Usage: flick [e/d] in out\nEncoder input must be raw CDDA (16 bit LE 2 channel)\n");
+		return printf("Usage: flick [e/d/q] in out\nEncoder input must be raw CDDA (16 bit LE 2 channel)\nDecoder input must be flick encoded or kaboom\n");
 	if(strcmp(argv[1], "e")==0)
 		return encode(argv[2], argv[3]);
 	else if(strcmp(argv[1], "d")==0)
 		return decode(argv[2], argv[3]);
+	else if(strcmp(argv[1], "q")==0)
+		return decode_quick(argv[2], argv[3]);
 	return printf("Mode unsupported\n");
 }
