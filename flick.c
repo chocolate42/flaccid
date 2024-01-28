@@ -117,7 +117,7 @@ uint8_t write_utf8(uint32_t n, uint8_t *ret){
 	}
 }
 
-int main(int argc, char *argv[]){
+int encode(char* ip, char *op){
 	FILE *fi, *fo;
 	size_t read;
 	static uint32_t blocksize_reverse_lookup[16]={0, 192, 576, 1152, 2304, 4608, 0, 0, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768};
@@ -136,10 +136,8 @@ int main(int argc, char *argv[]){
 	uint8_t in[4608*4], out[12+2+(4608*4)+1+2];
 	uint32_t frame=0, loc, channel, i, tot_samples=0;
 
-	if(argc!=3)
-		return printf("Usage: flick in.raw out.flac\nInput must be raw CDDA (16 bit LE 2 channel)\n");
-	fi=fopen(argv[1], "rb");
-	fo=fopen(argv[2], "wb");
+	fi=fopen(ip, "rb");
+	fo=fopen(op, "wb");
 
 	//adapt stuff for different input types TODO
 
@@ -196,6 +194,12 @@ int main(int argc, char *argv[]){
 
 	fclose(fi);
 	fclose(fo);
+}
 
-	return 0;
+int main(int argc, char *argv[]){
+	if(argc!=4)
+		return printf("Usage: flick e in.raw out.flac\nInput must be raw CDDA (16 bit LE 2 channel)\n");
+	if(strcmp(argv[1], "e")!=0)
+		return printf("Mode unsupported\n");
+	return encode(argv[2], argv[3]);
 }
